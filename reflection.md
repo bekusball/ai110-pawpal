@@ -4,8 +4,7 @@
 
 **a. Initial design**
 
-- Briefly describe your initial UML design.
-- What classes did you include, and what responsibilities did you assign to each?
+My initial UML uses four focused classes: `Owner`, `Pet`, `Task`, and `Scheduler`. An `Owner` stores their name, daily available time, and pets. Each `Pet` stores basic information and its care tasks. A `Task` represents a single care need with a title, duration, priority, category, and completion status. The `Scheduler` keeps the planning logic separate from the data model: it sorts tasks, builds a plan that fits the owner's available time, and explains why tasks were selected. The relationships are `Owner → Pet → Task`, while `Scheduler` uses tasks without owning them.
 
 **b. Design changes**
 

@@ -1,0 +1,33 @@
+classDiagram
+    class Owner {
+        +str name
+        +int available_minutes
+        +list~Pet~ pets
+        +add_pet(pet: Pet) void
+    }
+
+    class Pet {
+        +str name
+        +str species
+        +list~Task~ tasks
+        +add_task(task: Task) void
+    }
+
+    class Task {
+        +str title
+        +int duration_minutes
+        +str priority
+        +str category
+        +bool completed
+        +describe() str
+    }
+
+    class Scheduler {
+        +sort_tasks(tasks: list~Task~) list~Task~
+        +build_daily_plan(tasks: list~Task~, available_minutes: int) list~Task~
+        +explain_plan(plan: list~Task~) list~str
+    }
+
+    Owner "1" *-- "0..*" Pet : owns
+    Pet "1" *-- "0..*" Task : has
+    Scheduler ..> Task : prioritizes
