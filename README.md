@@ -1,6 +1,6 @@
 # PawPal+ (Module 2 Project)
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+**PawPal+** helps a pet owner plan care tasks for their pets. The domain logic currently runs through a CLI demo; the Streamlit starter in `app.py` is reserved for later integration.
 
 ## Scenario
 
@@ -32,63 +32,110 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+### Run the CLI demo
+
+With the virtual environment active:
+
+```bash
+python main.py
+```
+
+In Windows PowerShell, you can also run it without activating the environment:
+
+```powershell
+.\.venv\Scripts\python.exe main.py
+```
+
+`main.py` imports `Owner`, `Pet`, `Task`, and `Scheduler` from `pawpal_system.py`. It creates Jordan, two dogs (Mochi and Biscuit), and one cat (Luna), with three, two, and one tasks respectively. All six tasks fit the default 90-minute budget. The CLI prints today's local date, a chronological table with consecutive slots from 08:00, one brief explanation per selected task, and budget totals.
+
+To try the harder scenario, switch these lines in `main()` by commenting out the default and uncommenting the alternative:
+
+```python
+owner = build_demo_owner(available_minutes=90)
+# owner = build_demo_owner(available_minutes=55)
+```
+
+The 55-minute scenario selects Mochi's walk and feeding, Luna's feeding, and Biscuit's enrichment. Biscuit's walk and Mochi's brushing appear under `Skipped (insufficient time)`. This demonstrates continuing to consider shorter tasks after skipping a task that does not fit the remaining budget.
+
 ### Suggested workflow
 
 1. Read the scenario carefully and identify requirements and edge cases.
 2. Draft a UML diagram (classes, attributes, methods, relationships).
 3. Convert UML into Python class stubs (no logic yet).
-4. Implement scheduling logic in small increments.
+4. Implement scheduling logic in small increments and verify it with `python main.py`.
 5. Add tests to verify key behaviors.
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
 
 ## 🖥️ Sample Output
 
-Paste a sample of your app's CLI or Streamlit output here so a reader can see what a generated plan looks like:
+The default demo (the date changes with the machine's local date):
 
+```text
+Jordan's schedule | 2026-10-11 | Budget: 90 min
+
+Time         Pet      Task          Min  Priority
+-----------  -------  ------------  ---  --------
+08:00-08:30  Mochi    Morning walk   30  HIGH
+08:30-08:40  Mochi    Feeding        10  HIGH
+08:40-09:00  Biscuit  Morning walk   20  HIGH
+09:00-09:05  Luna     Feeding         5  HIGH
+09:05-09:15  Biscuit  Enrichment     10  MEDIUM
+09:15-09:30  Mochi    Brushing       15  LOW
+
+6 tasks | Used: 90 min | Remaining: 0 min
+
+Why these tasks:
+  - Mochi / Morning walk: high priority; 30 min fits in 90 min; 60 min left.
+  - Mochi / Feeding: high priority; 10 min fits in 60 min; 50 min left.
+  - Biscuit / Morning walk: high priority; 20 min fits in 50 min; 30 min left.
+  - Luna / Feeding: high priority; 5 min fits in 30 min; 25 min left.
+  - Biscuit / Enrichment: medium priority; 10 min fits in 25 min; 15 min left.
+  - Mochi / Brushing: low priority; 15 min fits in 15 min; 0 min left.
+
+Skipped: none
 ```
-# e.g.:
-# Daily plan for Biscuit (Golden Retriever):
-#   08:00 — Morning walk (30 min) [priority: high]
-#   09:00 — Feeding (10 min) [priority: high]
-#   ...
+
+The harder scenario prints a compact skipped-task table:
+
+```text
+Skipped (insufficient time):
+Pet      Task          Min
+-------  ------------  ---
+Biscuit  Morning walk   20
+Mochi    Brushing       15
 ```
 
 ## 🧪 Testing PawPal+
 
 ```bash
-# Run the full test suite:
-pytest
-
-# Run with coverage:
-pytest --cov
+python -m pytest -q
 ```
 
-Sample test output:
+The tests cover model validation, pet/task associations, duplicate attachments, independent collections, daily and one-time completion behavior, stable priority ordering, budget limits, completed-task exclusion, and continuing after an oversized task. CLI tests check both budgets, printed times and pet identities, and silent imports.
 
-```
-# Paste your pytest output here
+Verified test result:
+
+```text
+69 passed
 ```
 
 ## 📐 Smarter Scheduling
 
-> Fill in once you've implemented scheduling logic.
-
 | Feature | Method(s) | Notes |
 |---------|-----------|-------|
-| Task sorting | | e.g., by priority, duration |
-| Filtering | | e.g., skip tasks if time runs out |
-| Conflict handling | | e.g., overlapping time slots |
-| Recurring tasks | | e.g., daily vs. weekly |
+| Task sorting | `Scheduler.sort_tasks()` | High, medium, then low priority; insertion order breaks ties; input is unchanged. |
+| Budget selection | `Scheduler.build_daily_plan(owner)` | Excludes completed tasks; skips tasks that do not fit and continues considering later tasks. |
+| Explanations | `Scheduler.explain_plan(plan, available_minutes)` | One explanation per selected task, with pet context, priority, duration, and remaining budget. |
+| Clock slots | `main()` | Displays consecutive start/end times from 08:00; tasks have no fixed-time constraints. |
+| Recurring tasks | `Task.reset_for_new_day()` | Explicitly resets daily completion; completed one-time tasks stay complete. |
+
+Planning leaves task completion and the owner's budget unchanged. When a high-priority task exceeds the remaining budget, a shorter task with lower priority can still be selected.
 
 ## 📸 Demo Walkthrough
 
-Describe your app in numbered steps so a reader can follow along without watching a video:
-
-1. <!-- Describe this step -->
-2. <!-- Describe this step -->
-3. <!-- Describe this step -->
-4. <!-- Describe this step -->
-5. <!-- Add more steps as needed -->
-
-**Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->
+1. Install the requirements and run `python main.py`.
+2. Check that Jordan's three pets have six scheduled tasks totaling 90 minutes.
+3. Read the brief task explanations for priority and budget fit, and check the used/remaining totals.
+4. Switch to the commented 55-minute owner-construction line and run the demo again.
+5. Check that the four selected tasks end at 08:55 and that Biscuit's walk and Mochi's brushing are listed as skipped.

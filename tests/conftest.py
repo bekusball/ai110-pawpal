@@ -56,5 +56,14 @@ def owner() -> Owner:
 
 
 @pytest.fixture
+def owner_with_tasks(owner: Owner, pet: Pet, tasks: list[Task]) -> Owner:
+    """Attach the deliberately unsorted tasks through the domain methods."""
+    for task in tasks:
+        pet.add_task(task)
+    owner.add_pet(pet)
+    return owner
+
+
+@pytest.fixture
 def scheduler() -> Scheduler:
     return Scheduler()
