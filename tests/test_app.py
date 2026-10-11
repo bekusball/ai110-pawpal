@@ -33,7 +33,7 @@ def submit(ui: AppTest, label: str) -> None:
 def active_owner(ui: AppTest) -> Owner:
     return next(
         owner for owner in ui.session_state.owners
-        if owner.id == ui.session_state.active_owner_id
+        if owner.id == ui.session_state.owner_picker
     )
 
 
@@ -59,9 +59,9 @@ def add_task(
     priority: str = "high", pet: Pet | None = None,
 ) -> None:
     if pet is not None:
-        ui.selectbox(key=key(ui, "task_pet")).set_value(pet.id)
+        ui.selectbox(key=key(ui, "selected_pet_id")).set_value(pet.id)
     ui.text_input(key=key(ui, "task_title")).set_value(title)
-    ui.number_input(key=key(ui, "duration")).set_value(minutes)
+    ui.number_input(key=key(ui, "duration_minutes")).set_value(minutes)
     ui.selectbox(key=key(ui, "priority")).set_value(priority)
     submit(ui, "Add task")
 
@@ -111,7 +111,7 @@ def test_new_owner_is_selected_and_shows_pets_and_bottom_schedule(ui: AppTest) -
     assert owner.name == "Jordan"
     assert owner.available_minutes == 90
     assert owner.pets == []
-    assert ui.selectbox(key="active_owner_id").value == owner.id
+    assert ui.selectbox(key="owner_picker").value == owner.id
     assert [header.value for header in ui.subheader] == [
         "Owner profiles", "Pets", "Build Schedule",
     ]
@@ -126,8 +126,8 @@ def test_first_pet_reveals_tasks_and_is_the_selected_target(ui: AppTest) -> None
 
     assert pet.name == "Mochi"
     assert pet.species == "cat"
-    assert ui.selectbox(key=key(ui, "task_pet")).value == pet.id
-    assert ui.selectbox(key=key(ui, "task_pet")).options == ["Mochi (cat)"]
+    assert ui.selectbox(key=key(ui, "selected_pet_id")).value == pet.id
+    assert ui.selectbox(key=key(ui, "selected_pet_id")).options == ["Mochi (cat)"]
     assert [header.value for header in ui.subheader] == [
         "Owner profiles", "Pets", "Tasks", "Build Schedule",
     ]
@@ -138,7 +138,7 @@ def test_adding_another_pet_selects_it_without_moving_existing_tasks(profile: Ap
     add_task(profile)
     second = add_pet(profile, "Biscuit")
 
-    assert profile.selectbox(key=key(profile, "task_pet")).value == second.id
+    assert profile.selectbox(key=key(profile, "selected_pet_id")).value == second.id
     assert first.tasks[0].pet is first
     assert second.tasks == []
     add_task(profile, "Play", 5, "low")
@@ -166,7 +166,7 @@ def test_duplicate_owner_and_pet_names_remain_independently_selectable(ui: AppTe
     first_owner = add_owner(ui, "Jordan")
     first_pet = add_pet(ui, "Mochi")
     second_pet = add_pet(ui, "Mochi")
-    assert ui.selectbox(key=key(ui, "task_pet")).options == [
+    assert ui.selectbox(key=key(ui, "selected_pet_id")).options == [
         "Mochi (dog) (1)", "Mochi (dog) (2)",
     ]
     add_task(ui, pet=first_pet)
@@ -175,13 +175,13 @@ def test_duplicate_owner_and_pet_names_remain_independently_selectable(ui: AppTe
 
     second_owner = add_owner(ui, "Jordan")
     assert second_owner.id != first_owner.id
-    assert ui.selectbox(key="active_owner_id").options == ["Jordan (1)", "Jordan (2)"]
+    assert ui.selectbox(key="owner_picker").options == ["Jordan (1)", "Jordan (2)"]
     assert active_owner(ui) is second_owner
     assert second_owner.pets == []
-    ui.selectbox(key="active_owner_id").set_value(first_owner.id).run()
+    ui.selectbox(key="owner_picker").set_value(first_owner.id).run()
     assert not ui.exception
     assert active_owner(ui) is first_owner
-    assert ui.selectbox(key=key(ui, "task_pet")).options == [
+    assert ui.selectbox(key=key(ui, "selected_pet_id")).options == [
         "Mochi (dog) (1)", "Mochi (dog) (2)",
     ]
 
@@ -202,7 +202,7 @@ def test_owner_switching_keeps_pets_tasks_and_budgets_separate(profile: AppTest)
     submit(profile, "Generate schedule")
     assert [row["Task"] for row in rows(profile, "Time")] == ["Sam's feeding"]
 
-    profile.selectbox(key="active_owner_id").set_value(first.id).run()
+    profile.selectbox(key="owner_picker").set_value(first.id).run()
     assert not profile.exception
     assert [row["Task"] for row in rows(profile, "Category")] == ["Jordan's feeding"]
     assert profile.number_input(key=key(profile, "available_minutes")).value == 15
@@ -346,14 +346,14 @@ def test_ordinary_rerun_preserves_domain_identity_and_stored_schedule(profile: A
     add_task(profile)
     task = pet.tasks[0]
     submit(profile, "Generate schedule")
-    saved_plan = profile.session_state.profile_states[owner.id]["plan"]
+    saved_plan = profile.session_state.profile_states[owner.id].plan
     profile.run()
 
     assert not profile.exception
     assert active_owner(profile) is owner
     assert owner.pets[0] is pet
     assert pet.tasks[0] is task
-    assert profile.session_state.profile_states[owner.id]["plan"] is saved_plan
+    assert profile.session_state.profile_states[owner.id].plan is saved_plan
     assert saved_plan == [task]
     assert saved_plan[0] is task
     assert [metric.value for metric in profile.metric] == ["1", "10", "80"]
@@ -367,7 +367,7 @@ def test_new_visit_starts_with_no_profiles(profile: AppTest) -> None:
     assert not other.exception
     assert other.session_state.owners == []
     assert other.session_state.profile_states == {}
-    assert other.session_state.selected_owner_id is None
+    assert other.session_state.remembered_owner_id is None
     assert [header.value for header in other.subheader] == ["Owner profiles"]
 
 
@@ -425,8 +425,8 @@ def test_pet_table_cascades_tasks_and_repairs_the_selected_pet(profile: AppTest)
     assert active_owner(profile).pets == [first]
     assert second.tasks == []
     assert deleted_task.pet is None
-    assert profile.selectbox(key=key(profile, "task_pet")).value == first.id
-    assert profile.selectbox(key=key(profile, "task_pet")).options == ["Mochi (dog)"]
+    assert profile.selectbox(key=key(profile, "selected_pet_id")).value == first.id
+    assert profile.selectbox(key=key(profile, "selected_pet_id")).options == ["Mochi (dog)"]
     assert [row["Task"] for row in rows(profile, "Category")] == ["Walk"]
     submit(profile, "Generate schedule")
     assert [row["Task"] for row in rows(profile, "Time")] == ["Walk"]
@@ -437,7 +437,7 @@ def test_deleting_an_unselected_pet_preserves_the_task_target(profile: AppTest) 
     select_for_deletion(profile, "pets", [0])
     submit(profile, "🗑️ Delete selected pets")
 
-    assert profile.selectbox(key=key(profile, "task_pet")).value == second.id
+    assert profile.selectbox(key=key(profile, "selected_pet_id")).value == second.id
     add_task(profile)
     assert second.tasks[0].pet is second
 
@@ -453,7 +453,7 @@ def test_deleting_all_pets_hides_tasks_but_keeps_the_schedule(profile: AppTest) 
     assert active_owner(profile).pets == []
     assert first.tasks == second.tasks == []
     assert active_owner(profile).get_all_tasks() == []
-    assert key(profile, "task_pet") not in profile.session_state
+    assert key(profile, "selected_pet_id") not in profile.session_state
     assert [header.value for header in profile.subheader] == [
         "Owner profiles", "Pets", "Build Schedule",
     ]
@@ -509,11 +509,11 @@ def test_profile_forms_pet_selection_and_schedule_restore_after_switching(profil
     profile.text_input(key=key(profile, "category")).set_value("grooming")
     profile.selectbox(key=key(profile, "frequency")).set_value("once")
     add_task(profile, "Nail trim", 15, "low", pet=mochi)
-    assert profile.session_state.profile_states[first.id]["inputs"]["task_title"] == "Nail trim"
+    assert profile.session_state.profile_states[first.id].form_values.task_title == "Nail trim"
     profile.number_input(key=key(profile, "available_minutes")).set_value(25)
     profile.time_input(key=key(profile, "start_time")).set_value(time(9, 30))
     submit(profile, "Generate schedule")
-    assert profile.session_state.profile_states[first.id]["inputs"]["task_title"] == "Nail trim"
+    assert profile.session_state.profile_states[first.id].form_values.task_title == "Nail trim"
     first_plan = rows(profile, "Time")
 
     second = add_owner(profile, "Sam")
@@ -524,22 +524,22 @@ def test_profile_forms_pet_selection_and_schedule_restore_after_switching(profil
     submit(profile, "Generate schedule")
     second_plan = rows(profile, "Time")
 
-    profile.selectbox(key="active_owner_id").set_value(first.id).run()
+    profile.selectbox(key="owner_picker").set_value(first.id).run()
     assert not profile.exception
     assert rows(profile, "Time") == first_plan
-    assert profile.selectbox(key=key(profile, "task_pet")).value == mochi.id
+    assert profile.selectbox(key=key(profile, "selected_pet_id")).value == mochi.id
     assert profile.text_input(key=key(profile, "pet_name")).value == "Luna"
     assert profile.selectbox(key=key(profile, "species")).value == "cat"
     assert profile.text_input(key=key(profile, "task_title")).value == "Nail trim"
-    assert profile.number_input(key=key(profile, "duration")).value == 15
+    assert profile.number_input(key=key(profile, "duration_minutes")).value == 15
     assert profile.selectbox(key=key(profile, "priority")).value == "low"
     assert profile.text_input(key=key(profile, "category")).value == "grooming"
     assert profile.selectbox(key=key(profile, "frequency")).value == "once"
     assert profile.number_input(key=key(profile, "available_minutes")).value == 25
     assert profile.time_input(key=key(profile, "start_time")).value == time(9, 30)
-    assert profile.session_state.selected_owner_id == first.id
+    assert profile.session_state.remembered_owner_id == first.id
 
-    profile.selectbox(key="active_owner_id").set_value(second.id).run()
+    profile.selectbox(key="owner_picker").set_value(second.id).run()
     assert not profile.exception
     assert rows(profile, "Time") == second_plan
     assert profile.time_input(key=key(profile, "start_time")).value == time(12, 15)
@@ -548,7 +548,7 @@ def test_profile_forms_pet_selection_and_schedule_restore_after_switching(profil
 def test_an_existing_empty_schedule_updates_when_the_first_task_is_added(ui: AppTest) -> None:
     owner = add_owner(ui)
     submit(ui, "Generate schedule")
-    assert ui.session_state.profile_states[owner.id]["plan"] == []
+    assert ui.session_state.profile_states[owner.id].plan == []
     add_pet(ui)
     add_task(ui)
 
@@ -582,14 +582,14 @@ def test_pet_cascade_refreshes_and_stores_only_remaining_tasks(profile: AppTest)
     select_for_deletion(profile, "pets", [0])
     submit(profile, "🗑️ Delete selected pets")
 
-    assert profile.session_state.profile_states[owner.id]["plan"] == luna.tasks
+    assert profile.session_state.profile_states[owner.id].plan == luna.tasks
     assert [row["Task"] for row in rows(profile, "Time")] == ["Feeding"]
     assert rows(profile, "Time")[0]["Time"] == "11:00–11:05"
     assert [metric.value for metric in profile.metric] == ["1", "5", "85"]
 
     add_owner(profile, "Sam")
     assert not profile.metric
-    profile.selectbox(key="active_owner_id").set_value(owner.id).run()
+    profile.selectbox(key="owner_picker").set_value(owner.id).run()
     assert not profile.exception
     assert [row["Task"] for row in rows(profile, "Time")] == ["Feeding"]
     assert rows(profile, "Time")[0]["Time"] == "11:00–11:05"
@@ -603,8 +603,8 @@ def test_deleting_the_last_pet_retains_a_visible_empty_generated_schedule(profil
     submit(profile, "🗑️ Delete selected pets")
 
     assert owner.pets == []
-    assert profile.session_state.profile_states[owner.id]["plan"] == []
-    assert profile.session_state.profile_states[owner.id]["inputs"]["task_pet"] is None
+    assert profile.session_state.profile_states[owner.id].plan == []
+    assert profile.session_state.profile_states[owner.id].form_values.selected_pet_id is None
     assert not profile.table
     assert not profile.dataframe
     assert [metric.value for metric in profile.metric] == ["0", "0", "90"]
@@ -618,15 +618,15 @@ def test_task_addition_updates_only_an_owner_with_a_generated_plan(profile: AppT
     second = add_owner(profile, "Sam")
     add_pet(profile, "Luna", "cat")
     add_task(profile, "Sam's feeding", 5)
-    assert profile.session_state.profile_states[second.id]["plan"] is None
+    assert profile.session_state.profile_states[second.id].plan is None
     assert not profile.metric
 
-    profile.selectbox(key="active_owner_id").set_value(first.id).run()
+    profile.selectbox(key="owner_picker").set_value(first.id).run()
     assert not profile.exception
     add_task(profile, "Play", 5, "low")
     assert [row["Task"] for row in rows(profile, "Time")] == ["Feeding", "Play"]
     assert [metric.value for metric in profile.metric] == ["2", "15", "75"]
-    assert profile.session_state.profile_states[second.id]["plan"] is None
+    assert profile.session_state.profile_states[second.id].plan is None
 
 
 def test_unsubmitted_schedule_inputs_do_not_change_a_saved_plan(profile: AppTest) -> None:
@@ -641,7 +641,7 @@ def test_unsubmitted_schedule_inputs_do_not_change_a_saved_plan(profile: AppTest
     assert not profile.exception
     assert rows(profile, "Time") == saved_plan
     assert owner.available_minutes == 90
-    assert profile.session_state.profile_states[owner.id]["plan_start_time"] == time(8)
+    assert profile.session_state.profile_states[owner.id].plan_start_time == time(8)
 
 
 def test_invalid_task_submission_keeps_the_generated_schedule(profile: AppTest) -> None:
@@ -664,11 +664,61 @@ def test_session_initialization_restores_a_remembered_owner_or_falls_back(
     second = create_owner("Sam")
     app = AppTest.from_file(str(APP_PATH))
     app.session_state.owners = [first, second]
-    app.session_state.selected_owner_id = second.id if valid_selection else "missing"
+    app.session_state.remembered_owner_id = second.id if valid_selection else "missing"
     app.run()
 
     assert not app.exception
     expected = second if valid_selection else first
-    assert app.selectbox(key="active_owner_id").value == expected.id
-    assert app.session_state.selected_owner_id == expected.id
+    assert app.selectbox(key="owner_picker").value == expected.id
+    assert app.session_state.remembered_owner_id == expected.id
     assert app.session_state.owners == [first, second]
+
+
+def test_existing_session_state_converts_without_losing_forms_or_plan_references() -> None:
+    owner = create_owner("Jordan")
+    pet = create_pet(owner, "Mochi", "dog")
+    task = create_task("Nail trim", 15, "low", "grooming", "once")
+    pet.add_task(task)
+    owner.available_minutes = 25
+    saved_plan = [task]
+    app = AppTest.from_file(str(APP_PATH))
+    app.session_state.owners = [owner]
+    app.session_state.selected_owner_id = owner.id
+    app.session_state.active_owner_id = owner.id
+    app.session_state.profile_states = {
+        owner.id: {
+            "inputs": {
+                "pet_name": "Mochi",
+                "species": "dog",
+                "task_pet": pet.id,
+                "task_title": "Nail trim",
+                "duration": 15,
+                "priority": "low",
+                "category": "grooming",
+                "frequency": "once",
+                "available_minutes": 25,
+                "start_time": time(9, 30),
+            },
+            "plan": saved_plan,
+            "plan_start_time": time(9, 30),
+        },
+    }
+    app.run()
+
+    assert not app.exception
+    state = app.session_state.profile_states[owner.id]
+    assert app.session_state.owners[0] is owner
+    assert state.plan is saved_plan
+    assert state.plan[0] is task
+    assert state.form_values.selected_pet_id == pet.id
+    assert app.selectbox(key="owner_picker").value == owner.id
+    assert app.session_state.remembered_owner_id == owner.id
+    assert "selected_owner_id" not in app.session_state
+    assert "active_owner_id" not in app.session_state
+    assert app.text_input(key=key(app, "task_title")).value == "Nail trim"
+    assert app.number_input(key=key(app, "duration_minutes")).value == 15
+    assert rows(app, "Time")[0]["Time"] == "09:30–09:45"
+    app.run()
+    assert not app.exception
+    assert app.session_state.profile_states[owner.id] is state
+    assert state.plan is saved_plan

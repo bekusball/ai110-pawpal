@@ -86,6 +86,12 @@ Session state keeps the owner collection, remembers the selected owner, and stor
 
 If the owner dropdown needs to be restored, it selects the session's remembered owner or the first existing owner as a fallback. A fresh browser session starts with no profiles. Storage lasts for the active Streamlit session: browser refresh, a new visit, or restarting the app begins fresh. There is no disk or database persistence. Frequency is recorded, but completion controls and new-day resets are outside this UI pass.
 
+### Code organization
+
+`app.py` groups session-state helpers, owner/pet/task actions, table formatting, and Streamlit rendering. `main()` follows the visible owner → pets → tasks → schedule flow. `FormValues` defines the saved form fields, and `ProfileState` holds those values plus a generated plan and its accepted start time. The owner dropdown uses `owner_picker`; `remembered_owner_id` stores the selection independently of the widget.
+
+`pet_rows()`, `task_rows()`, and the schedule-row helpers build table data separately from rendering. `repair_pet_selection()` handles dropdown repair after cascade deletion. Docstrings describe validation, side effects, and state lifetimes; comments explain widget-restoration timing and why an empty generated plan differs from an ungenerated plan. Existing sessions using the previous dictionary representation are converted once while preserving owner, pet, task, and plan references.
+
 ### Suggested workflow
 
 1. Read the scenario carefully and identify requirements and edge cases.
@@ -146,7 +152,7 @@ The tests cover model validation, pet/task associations, duplicate attachments, 
 Verified test result:
 
 ```text
-114 passed
+115 passed
 ```
 
 ## 📐 Smarter Scheduling
