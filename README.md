@@ -69,16 +69,22 @@ In Windows PowerShell, without activating the environment:
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-The first UI integration supports one pet, matching the starter inputs:
+The UI follows an owner-first flow and supports multiple owner profiles and pets:
 
-1. Enter the owner name, pet name, and species.
-2. Add tasks with a title, duration, priority, category, and frequency (`daily` or `once`). Blank titles and categories are rejected.
-3. Set the available minutes and start time, then select **Generate schedule**.
-4. Check the consecutive time slots, used/remaining budget, task explanations, and tasks skipped for insufficient time. Zero available minutes and an empty task list produce an empty plan with a helpful message.
+1. Start by adding an owner profile. There is no preset or default profile. Creating an owner selects that profile and initializes a 90-minute budget.
+2. Use the owner dropdown to switch profiles, or add another owner. Each profile has its own pets, tasks, and planning budget.
+3. Under the selected owner, add pets with a name and species. Adding a pet attaches it to that owner and selects it as the next task target.
+4. Once the owner has at least one pet, the Tasks section appears. Choose a pet inside the Add task form and enter a title, duration, priority, category, and frequency (`daily` or `once`). Blank names, task titles, and categories are rejected.
+5. Build Schedule remains at the bottom of every owner profile, including profiles without pets. Set the available minutes and start time (initially 08:00), then select **Generate schedule**.
+6. Check the consecutive slots, used/remaining budget, explanations, and skipped tasks. The plan combines tasks across the selected owner's pets. Empty profiles and zero available minutes produce a helpful empty result.
 
-**Add task** validates inputs using `Task`. **Generate schedule** creates an `Owner`, attaches a `Pet` and its tasks, and calls `Scheduler.build_daily_plan()` and `Scheduler.explain_plan()`. Clock slots are assigned by the UI.
+Owner, pet, and task creation use focused forms and validation helpers. They create domain objects and attach them through `Owner.add_pet()` and `Pet.add_task()`. **Generate schedule** calls `Scheduler.build_daily_plan()` and `Scheduler.explain_plan()` for the selected owner. Clock slots are assigned by the UI. Dropdowns select by ID; repeated display names receive numbered labels so separate profiles and pets remain selectable.
 
-Session-state storage is a separate, deferred phase. For now, the UI keeps the starter's task-record list and reconstructs domain objects when generating a schedule. It does not store an owner, pet, or generated plan. All task records belong to the currently entered pet; changing that pet's inputs changes the context of the next plan. Results disappear on another UI interaction, so select **Generate schedule** again after changing inputs. Frequency is recorded, but completion controls and new-day resets are not part of this first UI pass.
+The pet and current-task tables have a **Delete** checkbox on each row. Select one or more rows, then use **🗑️ Delete selected pets** or **🗑️ Delete selected tasks** below that table. The other columns are read-only, and the trash button stays disabled until a row is selected. Deletion uses object IDs, so matching names or task titles remain separate. Deleting a pet also deletes all of its tasks and updates the task dropdown to a remaining pet. Deleting the last pet hides Tasks while keeping Build Schedule available. Adding rows clears old deletion marks so they cannot apply to different rows. Select **Generate schedule** again after deleting items to plan the remaining tasks.
+
+Minimal temporary Streamlit state keeps the working owner collection and active selection during the current visit. Each owner contains their pets and tasks. Reloading the browser or starting another visit begins with no profiles; there is no disk or database persistence. Owner-specific form keys keep inputs from leaking between profiles, and each owner's last submitted budget is retained in their working profile. Generated results appear only on submission and disappear on another interaction; select **Generate schedule** again to display a plan.
+
+Deferred follow-ups include stored schedules with refresh after task changes and loading a default profile. Frequency is recorded, but completion controls and new-day resets are also outside this UI pass.
 
 ### Suggested workflow
 
@@ -135,12 +141,12 @@ Mochi    Brushing       15
 python -m pytest -q
 ```
 
-The tests cover model validation, pet/task associations, duplicate attachments, independent collections, daily and one-time completion behavior, stable priority ordering, budget limits, completed-task exclusion, and continuing after an oversized task. CLI tests check both budgets, printed times and pet identities, and silent imports. Streamlit tests exercise task submission, input validation, planning with current owner/pet inputs, time slots (including midnight), skipped tasks, empty results, and repeated generation without changing task completion.
+The tests cover model validation, pet/task associations, duplicate attachments, independent collections, daily and one-time completion behavior, stable priority ordering, budget limits, completed-task exclusion, and continuing after an oversized task. CLI tests check both budgets, printed times and pet identities, and silent imports. Streamlit tests cover the empty owner-first view, conditional sections, selecting new owners and pets, switching profiles without mixing data or budgets, duplicate names, task assignment, plans across multiple pets, validation, empty results, midnight slots, and repeated generation without changing task completion. They also verify that working data survives reruns while schedule results are not stored, and that a new visit starts empty. Deletion tests cover selecting table rows, duplicate titles, multiple rows across pets, pet-task cascade deletion, dropdown repair, deleting the last pet/task, owner isolation, and clearing selection after adding rows. AppTest does not support direct table-cell interaction, so tests provide the table-edit state a browser sends and exercise the real trash buttons.
 
 Verified test result:
 
 ```text
-83 passed
+104 passed
 ```
 
 ## 📐 Smarter Scheduling
