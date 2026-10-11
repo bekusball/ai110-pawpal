@@ -1,6 +1,6 @@
 # PawPal+ (Module 2 Project)
 
-**PawPal+** helps a pet owner plan care tasks for their pets. The domain logic currently runs through a CLI demo; the Streamlit starter in `app.py` is reserved for later integration.
+**PawPal+** helps a pet owner plan care tasks for their pets. The domain logic runs through a CLI demo and the Streamlit actions in `app.py`.
 
 ## Scenario
 
@@ -57,6 +57,29 @@ owner = build_demo_owner(available_minutes=90)
 
 The 55-minute scenario selects Mochi's walk and feeding, Luna's feeding, and Biscuit's enrichment. Biscuit's walk and Mochi's brushing appear under `Skipped (insufficient time)`. This demonstrates continuing to consider shorter tasks after skipping a task that does not fit the remaining budget.
 
+### Run the Streamlit UI
+
+```bash
+python -m streamlit run app.py
+```
+
+In Windows PowerShell, without activating the environment:
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run app.py
+```
+
+The first UI integration supports one pet, matching the starter inputs:
+
+1. Enter the owner name, pet name, and species.
+2. Add tasks with a title, duration, priority, category, and frequency (`daily` or `once`). Blank titles and categories are rejected.
+3. Set the available minutes and start time, then select **Generate schedule**.
+4. Check the consecutive time slots, used/remaining budget, task explanations, and tasks skipped for insufficient time. Zero available minutes and an empty task list produce an empty plan with a helpful message.
+
+**Add task** validates inputs using `Task`. **Generate schedule** creates an `Owner`, attaches a `Pet` and its tasks, and calls `Scheduler.build_daily_plan()` and `Scheduler.explain_plan()`. Clock slots are assigned by the UI.
+
+Session-state storage is a separate, deferred phase. For now, the UI keeps the starter's task-record list and reconstructs domain objects when generating a schedule. It does not store an owner, pet, or generated plan. All task records belong to the currently entered pet; changing that pet's inputs changes the context of the next plan. Results disappear on another UI interaction, so select **Generate schedule** again after changing inputs. Frequency is recorded, but completion controls and new-day resets are not part of this first UI pass.
+
 ### Suggested workflow
 
 1. Read the scenario carefully and identify requirements and edge cases.
@@ -112,12 +135,12 @@ Mochi    Brushing       15
 python -m pytest -q
 ```
 
-The tests cover model validation, pet/task associations, duplicate attachments, independent collections, daily and one-time completion behavior, stable priority ordering, budget limits, completed-task exclusion, and continuing after an oversized task. CLI tests check both budgets, printed times and pet identities, and silent imports.
+The tests cover model validation, pet/task associations, duplicate attachments, independent collections, daily and one-time completion behavior, stable priority ordering, budget limits, completed-task exclusion, and continuing after an oversized task. CLI tests check both budgets, printed times and pet identities, and silent imports. Streamlit tests exercise task submission, input validation, planning with current owner/pet inputs, time slots (including midnight), skipped tasks, empty results, and repeated generation without changing task completion.
 
 Verified test result:
 
 ```text
-69 passed
+83 passed
 ```
 
 ## 📐 Smarter Scheduling
@@ -127,7 +150,7 @@ Verified test result:
 | Task sorting | `Scheduler.sort_tasks()` | High, medium, then low priority; insertion order breaks ties; input is unchanged. |
 | Budget selection | `Scheduler.build_daily_plan(owner)` | Excludes completed tasks; skips tasks that do not fit and continues considering later tasks. |
 | Explanations | `Scheduler.explain_plan(plan, available_minutes)` | One explanation per selected task, with pet context, priority, duration, and remaining budget. |
-| Clock slots | `main()` | Displays consecutive start/end times from 08:00; tasks have no fixed-time constraints. |
+| Clock slots | CLI `main()` / UI `schedule_rows()` | Displays consecutive start/end times from 08:00 in the CLI or the chosen start time in the UI; tasks have no fixed-time constraints. |
 | Recurring tasks | `Task.reset_for_new_day()` | Explicitly resets daily completion; completed one-time tasks stay complete. |
 
 Planning leaves task completion and the owner's budget unchanged. When a high-priority task exceeds the remaining budget, a shorter task with lower priority can still be selected.
