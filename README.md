@@ -57,6 +57,20 @@ owner = build_demo_owner(available_minutes=90)
 
 The 55-minute scenario selects Mochi's walk and feeding, Luna's feeding, and Biscuit's enrichment. Biscuit's walk and Mochi's brushing appear under `Skipped (insufficient time)`. This demonstrates continuing to consider shorter tasks after skipping a task that does not fit the remaining budget.
 
+### Run the algorithms demo
+
+```bash
+python main.py --algorithms
+```
+
+In Windows PowerShell, without activating the environment:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --algorithms
+```
+
+This separate, noninteractive demo completes Mochi's daily feeding and a one-time nail trim, displays incomplete and completed tasks using combined status/pet filters, and shows the daily successor excluded from today's plan and included tomorrow. It also reports a fixed-time clash between Mochi's 08:00–08:30 walk and Biscuit's 08:15–08:35 walk, with full dates on both intervals. The default schedule demo and programmatic `main()` keep their existing behavior.
+
 ### Run the Streamlit UI
 
 ```bash
@@ -84,7 +98,7 @@ The pet and current-task tables have a **Delete** checkbox on each row. Select o
 
 Session state keeps the owner collection, remembers the selected owner, and stores form values and a generated plan separately for each owner ID. Owners continue to contain their own pets and tasks; plans reference those same task objects. Submitted pet/task form values, the selected pet, budget, and start time are restored when switching profiles, even after Streamlit clears hidden widgets. A profile without a generated plan stays unscheduled until **Generate schedule** is selected. Once generated, an empty plan also stays visible and refreshes when tasks are added. Changing the schedule form takes effect on submission; unsubmitted edits do not change the displayed plan.
 
-If the owner dropdown needs to be restored, it selects the session's remembered owner or the first existing owner as a fallback. A fresh browser session starts with no profiles. Storage lasts for the active Streamlit session: browser refresh, a new visit, or restarting the app begins fresh. There is no disk or database persistence. Frequency is recorded, but completion controls and new-day resets are outside this UI pass.
+If the owner dropdown needs to be restored, it selects the session's remembered owner or the first existing owner as a fallback. A fresh browser session starts with no profiles. Storage lasts for the active Streamlit session: browser refresh, a new visit, or restarting the app begins fresh. There is no disk or database persistence. Tasks default to today's due date. Filtering, occurrence completion, and fixed-time conflict reporting are demonstrated through domain methods and the algorithms CLI demo. Streamlit controls for these features, due dates, and fixed start times are deferred to a later phase.
 
 ### Code organization
 
@@ -147,25 +161,42 @@ Mochi    Brushing       15
 python -m pytest -q
 ```
 
-The tests cover model validation, pet/task associations, duplicate attachments, independent collections, daily and one-time completion behavior, stable priority ordering, budget limits, completed-task exclusion, and continuing after an oversized task. CLI tests check both budgets, printed times and pet identities, and silent imports. Streamlit tests cover the empty owner-first view, conditional sections, selecting new owners and pets, switching profiles without mixing data or budgets, duplicate names, task assignment, plans across multiple pets, validation, empty results, midnight slots, and repeated generation without changing task completion. Session tests check domain identity and saved schedules across reruns, restoring forms and plans after profile switching, owner-selection fallback, automatic refresh after additions and deletions, visible empty plans, and preserving schedules during unsubmitted edits or invalid task submissions. A new visit still starts empty. Deletion tests cover selecting table rows, duplicate titles, multiple rows across pets, pet-task cascade deletion, dropdown repair, deleting the last pet/task, owner isolation, and clearing selection after adding rows. AppTest does not support direct table-cell interaction, so tests provide the table-edit state a browser sends and exercise the real trash buttons.
+The tests cover model validation, pet/task associations, duplicate attachments, independent collections, daily and one-time completion behavior, stable priority ordering, budget limits, completed-task exclusion, and continuing after an oversized task. Algorithm tests cover combined filters, duplicate pet names, retained completion history, fresh successor IDs, repeated completion, owner isolation, calendar rollover, overdue/future planning, and fixed-time conflicts across pets and midnight. CLI tests check both budgets, printed times and pet identities, the algorithms flag, help output, and silent imports. Streamlit tests cover the empty owner-first view, conditional sections, selecting new owners and pets, switching profiles without mixing data or budgets, duplicate names, task assignment, plans across multiple pets, validation, empty results, midnight slots, and repeated generation without changing task completion. Session tests check domain identity and saved schedules across reruns, restoring forms and plans after profile switching, owner-selection fallback, automatic refresh after additions and deletions, visible empty plans, and preserving schedules during unsubmitted edits or invalid task submissions. A new visit still starts empty. Deletion tests cover selecting table rows, duplicate titles, multiple rows across pets, pet-task cascade deletion, dropdown repair, deleting the last pet/task, owner isolation, and clearing selection after adding rows. AppTest does not support direct table-cell interaction, so tests provide the table-edit state a browser sends and exercise the real trash buttons.
 
 Verified test result:
 
 ```text
-115 passed
+159 passed
 ```
 
 ## 📐 Smarter Scheduling
 
 | Feature | Method(s) | Notes |
 |---------|-----------|-------|
+| Filtering | `Scheduler.filter_tasks(tasks, completed=None, pet_name=None)` | Status and pet filters combine with AND. Pet names match exactly after trimming and case folding; duplicate names match all corresponding pets. Returns a new list with the original objects in input order. |
 | Task sorting | `Scheduler.sort_tasks()` | High, medium, then low priority; insertion order breaks ties; input is unchanged. |
-| Budget selection | `Scheduler.build_daily_plan(owner)` | Excludes completed tasks; skips tasks that do not fit and continues considering later tasks. |
+| Budget selection | `Scheduler.build_daily_plan(owner, plan_date=None)` | Defaults to today; includes incomplete tasks due on or before that date. Skips future tasks and tasks that do not fit, continuing to consider later tasks. |
 | Explanations | `Scheduler.explain_plan(plan, available_minutes)` | One explanation per selected task, with pet context, priority, duration, and remaining budget. |
-| Clock slots | CLI `main()` / UI `schedule_rows()` | Displays consecutive start/end times from 08:00 in the CLI or the chosen start time in the UI; tasks have no fixed-time constraints. |
-| Recurring tasks | `Task.reset_for_new_day()` | Explicitly resets daily completion; completed one-time tasks stay complete. |
+| Clock slots | CLI `main()` / UI `schedule_rows()` | Displays consecutive start/end times from 08:00 in the CLI or the chosen start time in the UI. Fixed start times are used for separate conflict reports. |
+| Completion and recurrence | `Scheduler.mark_task_complete(owner, task_id, today=None)` | Retains the completed occurrence. Daily tasks create a fresh incomplete successor for the same pet due tomorrow; once tasks create no successor. |
+| Conflict detection | `Scheduler.detect_conflicts(tasks)` | Returns unique overlapping `(Task, Task)` pairs for incomplete fixed-time tasks, in input pair order. Pass `owner.get_all_tasks()` to include all the owner's pets. Adjacent intervals do not conflict. |
 
 Planning leaves task completion and the owner's budget unchanged. When a high-priority task exceeds the remaining budget, a shorter task with lower priority can still be selected.
+
+`Task.due_date` defaults to `date.today()` and `fixed_start_time` defaults to `None`. Due dates are calendar dates and fixed start times are local clock times without timezone information. The optional filtering arguments, completion date, and planning date are keyword-only.
+
+Completing a daily task copies its title, duration, priority, category, frequency, and fixed start time to a new task with a new ID. Its due date is based on the completion date, including when the original task was overdue:
+
+```python
+from datetime import date, timedelta
+
+tomorrow = date.today() + timedelta(days=1)
+successor = Scheduler().mark_task_complete(owner, task.id)
+```
+
+`timedelta(days=1)` handles month, year, and leap-day rollover. The successor is returned for daily tasks; one-time and already-completed tasks return `None`. Repeating completion does not add another occurrence. An unknown task ID, including an ID belonging to another owner, raises `ValueError` without changing tasks. This replaces the former `Task.reset_for_new_day()` API: completed occurrences remain completed.
+
+Conflict detection combines each incomplete task's due date and fixed start time with its duration, so intervals crossing midnight are compared accurately. Tasks without fixed start times and completed tasks are excluded. Reports can include future dated occurrences and do not alter the priority/budget plan or assign new clock slots. The CLI demos use fresh in-memory data each run; there is no persistence.
 
 ## 📸 Demo Walkthrough
 
@@ -174,3 +205,4 @@ Planning leaves task completion and the owner's budget unchanged. When a high-pr
 3. Read the brief task explanations for priority and budget fit, and check the used/remaining totals.
 4. Switch to the commented 55-minute owner-construction line and run the demo again.
 5. Check that the four selected tasks end at 08:55 and that Biscuit's walk and Mochi's brushing are listed as skipped.
+6. Run `python main.py --algorithms` to check status/pet filters, retained completed occurrences, tomorrow's daily feeding, one-time completion, and the conflict between the two dogs' walks.

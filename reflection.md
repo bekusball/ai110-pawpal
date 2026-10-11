@@ -14,7 +14,11 @@ My initial UML uses four focused classes: `Owner`, `Pet`, `Task`, and `Scheduler
   - Add **IDs to Owner, Pet, and Task**. Reason: Names and task titles can repeat or change; IDs provide stable identification.
   - Add **a pet association to Task**. Reason: Tasks retain their pet context when combined into one plan.
   - Add **frequency to Task**. Reason: Distinguishes recurring activities from one-time tasks; initially, scheduling supports daily and once.
-  - Define **completed as completion for the current planning day** and add `reset_for_new_day()`. Reason: Daily tasks become eligible again on a new day; completed one-time tasks remain complete.
+  - Define **completed as completion of one task occurrence** and replace daily resets with `Scheduler.mark_task_complete()`. Reason: A completed daily task stays in the history while a fresh incomplete task with a new ID is attached to the same pet. One-time tasks stay completed without creating a successor, and repeated completion does not duplicate tasks.
+  - Add **due_date to Task** and an optional planning date to `Scheduler.build_daily_plan()`. Reason: Daily successors are due on the completion date plus `timedelta(days=1)`. Planning includes overdue and current tasks while keeping tomorrow's tasks out of today's plan.
+  - Add **optional fixed_start_time to Task**. Reason: Some care activities have a specific clock time. Combined with the due date and duration, this defines an interval for checking overlaps, including intervals that cross midnight.
+  - Add **Scheduler.filter_tasks()**. Reason: Tasks can be filtered by completion status and exact pet name, with both filters combined when needed. Filtering preserves the original objects and their order.
+  - Add **Scheduler.detect_conflicts()**. Reason: The owner may have overlapping tasks for different pets. Reporting incomplete fixed-time overlaps helps identify these conflicts while keeping priority and time-budget selection separate.
   - Add **Owner.get_all_tasks()**. Reason: Provides one place to retrieve tasks across the owner's pets.
   - Change **Scheduler.build_daily_plan() to accept an Owner**. Reason: Gives the scheduler access to all tasks and the owner's time budget.
   - Pass **the time budget into Scheduler.explain_plan()**. Reason: Allows explanations to connect task selection to available time.

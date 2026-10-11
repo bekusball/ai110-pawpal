@@ -1,5 +1,7 @@
 """Tests for the Owner / Pet / Task data model."""
 
+from datetime import date, datetime, time, timezone
+
 import pytest
 
 from pawpal_system import Owner, Pet, Task
@@ -10,11 +12,21 @@ class TestTask:
         assert morning_walk.frequency == "daily"
         assert morning_walk.pet is None
 
-    @pytest.mark.parametrize("frequency, expected", [("daily", False), ("once", True)])
-    def test_new_day_resets_only_daily_completion(self, frequency: str, expected: bool) -> None:
-        task = Task("Feeding", 10, "high", "food", completed=True, frequency=frequency)
-        task.reset_for_new_day()
-        assert task.completed is expected
+    def test_defaults_to_today_without_a_fixed_start(self, morning_walk: Task) -> None:
+        assert morning_walk.due_date == date.today()
+        assert morning_walk.fixed_start_time is None
+
+    def test_new_fields_preserve_existing_positional_arguments(self, pet: Pet) -> None:
+        task = Task(
+            "Feeding", 10, "high", "food", False, "once", pet,
+            due_date=date(2026, 10, 12), fixed_start_time=time(8),
+        )
+
+        assert task.pet is pet
+        assert task.frequency == "once"
+        assert task.completed is False
+        assert task.due_date == date(2026, 10, 12)
+        assert task.fixed_start_time == time(8)
 
     @pytest.mark.parametrize("duration", [0, -1, 1.5, "10", True, None])
     def test_rejects_invalid_duration(self, duration: object) -> None:
@@ -31,13 +43,17 @@ class TestTask:
         with pytest.raises(ValueError, match="frequency"):
             Task("Feeding", 10, "high", "food", frequency=frequency)
 
-    @pytest.mark.parametrize("frequency", ["daily", "once"])
-    def test_new_day_keeps_incomplete_tasks_incomplete(self, frequency: str) -> None:
-        task = Task("Feeding", 10, "high", "food", frequency=frequency)
+    @pytest.mark.parametrize("due_date", [None, "2026-10-11", datetime(2026, 10, 11)])
+    def test_rejects_invalid_due_date(self, due_date: object) -> None:
+        with pytest.raises(ValueError, match="due_date"):
+            Task("Feeding", 10, "high", "food", due_date=due_date) # pyright: ignore[reportArgumentType]
 
-        task.reset_for_new_day()
-
-        assert task.completed is False
+    @pytest.mark.parametrize(
+        "fixed_start", ["08:00", datetime(2026, 10, 11, 8), time(8, tzinfo=timezone.utc)],
+    )
+    def test_rejects_invalid_or_timezone_aware_start(self, fixed_start: object) -> None:
+        with pytest.raises(ValueError, match="fixed_start_time"):
+            Task("Feeding", 10, "high", "food", fixed_start_time=fixed_start) # pyright: ignore[reportArgumentType]
 
     def test_defaults_to_not_completed(self, morning_walk: Task) -> None:
         assert morning_walk.completed is False

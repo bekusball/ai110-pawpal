@@ -1,6 +1,6 @@
 """Check the demo data, printed schedule, and guarded CLI entrypoint."""
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 import re
 import subprocess
@@ -108,4 +108,56 @@ def test_importing_main_is_silent() -> None:
     )
 
     assert result.stdout == ""
+    assert result.stderr == ""
+
+
+def test_algorithms_cli_shows_filters_recurrence_and_cross_pet_conflicts() -> None:
+    result = subprocess.run(
+        [sys.executable, "main.py", "--algorithms"], cwd=PROJECT_ROOT,
+        capture_output=True, text=True, check=True,
+    )
+    output = result.stdout
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+
+    assert f"PawPal+ algorithms | {today.isoformat()}" in output
+    assert f"Completed Mochi / Feeding; new incomplete daily occurrence due {tomorrow.isoformat()}." in output
+    assert "Completed Mochi / Nail trim; no successor (once)." in output
+    incomplete, completed = output.split("Incomplete tasks for Mochi (status + pet filter):")[1].split(
+        "Completed tasks for Mochi (status + pet filter):",
+    )
+    incomplete_rows = [
+        re.split(r" {2,}", line.strip()) for line in incomplete.splitlines()
+        if line.startswith("Mochi")
+    ]
+    assert incomplete_rows == [
+        ["Mochi", "Morning walk", "daily", today.isoformat(), "no"],
+        ["Mochi", "Brushing", "daily", today.isoformat(), "no"],
+        ["Mochi", "Feeding", "daily", tomorrow.isoformat(), "no"],
+    ]
+    completed_rows = [
+        re.split(r" {2,}", line.strip()) for line in completed.splitlines()
+        if line.startswith("Mochi")
+    ]
+    assert completed_rows == [
+        ["Mochi", "Feeding", "daily", today.isoformat(), "yes"],
+        ["Mochi", "Nail trim", "once", today.isoformat(), "yes"],
+    ]
+    assert f"Daily successor in the plan:\n  {today.isoformat()}: no\n  {tomorrow.isoformat()}: yes" in output
+    assert (
+        f"Conflict: Mochi / Morning walk ({today.isoformat()} 08:00 to {today.isoformat()} 08:30) "
+        f"overlaps Biscuit / Morning walk ({today.isoformat()} 08:15 to {today.isoformat()} 08:35)"
+    ) in output
+    assert output.count("Conflict:") == 1
+    assert result.stderr == ""
+
+
+def test_cli_help_describes_the_algorithms_flag() -> None:
+    result = subprocess.run(
+        [sys.executable, "main.py", "--help"], cwd=PROJECT_ROOT,
+        capture_output=True, text=True, check=True,
+    )
+
+    assert "--algorithms" in result.stdout
+    assert "filtering, completion, recurrence, and conflicts" in result.stdout
     assert result.stderr == ""

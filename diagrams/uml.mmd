@@ -25,20 +25,30 @@ classDiagram
         +str category
         +bool completed
         +str frequency
-        +reset_for_new_day() void
+        +date due_date
+        +time fixed_start_time
         +describe() str
     }
 
     class Scheduler {
+        +filter_tasks(tasks: list~Task~, completed: bool = None, pet_name: str = None) list~Task~
+        +mark_task_complete(owner: Owner, task_id: str, today: date = None) Task
         +sort_tasks(tasks: list~Task~) list~Task~
-        +build_daily_plan(owner: Owner) list~Task~
+        +build_daily_plan(owner: Owner, plan_date: date = None) list~Task~
+        +detect_conflicts(tasks: list~Task~) list~tuple~
         +explain_plan(plan: list~Task~, available_minutes: int) list~str
     }
 
     Owner "1" *-- "0..*" Pet : owns
     Pet "1" *-- "0..*" Task : has
     %% Task.pet may be None until attached through Pet.add_task().
-    %% frequency initially supports daily and once; completed refers to the current day.
+    %% completed refers to this occurrence; completed history is retained.
+    %% due_date defaults to today; fixed_start_time is optional and uses local time.
+    %% Completing daily creates a fresh Task due today + 1 day; once has no successor.
+    %% mark_task_complete returns the daily successor or None.
+    %% detect_conflicts returns (Task, Task) pairs across the owner's pets.
+    %% Filter options, today, and plan_date are keyword-only parameters.
+    %% Fixed times are for conflict reports; planning uses due dates, priority, and budget.
     Task --> Pet : belongs to
     Scheduler ..> Owner : retrieves tasks and budget
-    Scheduler ..> Task : prioritizes
+    Scheduler ..> Task : filters, completes, plans, detects conflicts

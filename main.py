@@ -1,5 +1,6 @@
-"""Run a fixed PawPal+ demo with `python main.py`."""
+"""Run the schedule demo, or explore algorithms with `--algorithms`."""
 
+from argparse import ArgumentParser
 from datetime import date, datetime, time, timedelta
 
 from pawpal_system import Owner, Pet, Scheduler, Task
@@ -90,7 +91,7 @@ def main() -> None:
     skipped = [
         task
         for task in scheduler.sort_tasks(owner.get_all_tasks())
-        if not task.completed and task.id not in selected_ids
+        if not task.completed and task.due_date <= today and task.id not in selected_ids
     ]
     if skipped:
         print("\nSkipped (insufficient time):")
@@ -102,5 +103,74 @@ def main() -> None:
         print("\nSkipped: none")
 
 
+def run_algorithm_demo() -> None:
+    """Demonstrate filtering, occurrence completion, and owner-wide conflicts."""
+    owner = build_demo_owner()
+    scheduler = Scheduler()
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+    mochi, biscuit, _ = owner.pets
+    daily = mochi.tasks[1]
+    once = Task("Nail trim", 15, "low", "grooming", frequency="once", due_date=today)
+    mochi.add_task(once)
+
+    print(f"PawPal+ algorithms | {today.isoformat()}")
+    print("\nCompletion and recurrence:")
+    successor = scheduler.mark_task_complete(owner, daily.id, today=today)
+    if successor is not None:
+        print(
+            f"Completed {mochi.name} / {daily.title}; "
+            f"new incomplete daily occurrence due {successor.due_date.isoformat()}."
+        )
+    scheduler.mark_task_complete(owner, once.id, today=today)
+    print(f"Completed {mochi.name} / {once.title}; no successor (once).")
+
+    for heading, completed in (
+        ("Incomplete tasks for Mochi (status + pet filter):", False),
+        ("Completed tasks for Mochi (status + pet filter):", True),
+    ):
+        print(f"\n{heading}")
+        filtered = scheduler.filter_tasks(
+            owner.get_all_tasks(), completed=completed, pet_name=" mochi ",
+        )
+        _print_table(("Pet", "Task", "Frequency", "Due", "Completed"), [
+            (
+                task.pet.name if task.pet else "-", task.title, task.frequency,
+                task.due_date.isoformat(), "yes" if task.completed else "no",
+            )
+            for task in filtered
+        ])
+
+    print("\nDaily successor in the plan:")
+    for planning_date in (today, tomorrow):
+        plan = scheduler.build_daily_plan(owner, plan_date=planning_date)
+        included = "yes" if successor is not None and successor in plan else "no"
+        print(f"  {planning_date.isoformat()}: {included}")
+
+    mochi.tasks[0].fixed_start_time = time(8)
+    biscuit.tasks[0].fixed_start_time = time(8, 15)
+    print("\nFixed-time conflicts across Jordan's pets:")
+    for first, second in scheduler.detect_conflicts(owner.get_all_tasks()):
+        labels = []
+        for task in (first, second):
+            start = datetime.combine(task.due_date, task.fixed_start_time)
+            end = start + timedelta(minutes=task.duration_minutes)
+            labels.append(
+                f"{task.pet.name if task.pet else '-'} / {task.title} "
+                f"({start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M})"
+            )
+        print(f"  Conflict: {labels[0]} overlaps {labels[1]}")
+    print("Conflict reporting leaves priority and budget selection unchanged.")
+
+
 if __name__ == "__main__":
-    main()
+    parser = ArgumentParser(description="Run a PawPal+ demonstration.")
+    parser.add_argument(
+        "--algorithms", action="store_true",
+        help="demonstrate filtering, completion, recurrence, and conflicts",
+    )
+    arguments = parser.parse_args()
+    if arguments.algorithms:
+        run_algorithm_demo()
+    else:
+        main()
