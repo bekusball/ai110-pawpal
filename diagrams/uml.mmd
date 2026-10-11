@@ -1,15 +1,44 @@
 classDiagram
-    %% Replace the placeholders below with your actual classes, attributes, methods, and relationships.
-    %% Keep this file updated so it matches your final implementation.
-
-    class ClassName {
-        +type attribute
-        +method() returnType
+    class Owner {
+        +str id
+        +str name
+        +int available_minutes
+        +list~Pet~ pets
+        +add_pet(pet: Pet) void
+        +get_all_tasks() list~Task~
     }
 
-    class AnotherClass {
-        +type attribute
-        +method() returnType
+    class Pet {
+        +str id
+        +str name
+        +str species
+        +list~Task~ tasks
+        +add_task(task: Task) void
     }
 
-    ClassName --> AnotherClass : relationship
+    class Task {
+        +str id
+        +Pet pet
+        +str title
+        +int duration_minutes
+        +str priority
+        +str category
+        +bool completed
+        +str frequency
+        +reset_for_new_day() void
+        +describe() str
+    }
+
+    class Scheduler {
+        +sort_tasks(tasks: list~Task~) list~Task~
+        +build_daily_plan(owner: Owner) list~Task~
+        +explain_plan(plan: list~Task~, available_minutes: int) list~str
+    }
+
+    Owner "1" *-- "0..*" Pet : owns
+    Pet "1" *-- "0..*" Task : has
+    %% Task.pet may be None until attached through Pet.add_task().
+    %% frequency initially supports daily and once; completed refers to the current day.
+    Task --> Pet : belongs to
+    Scheduler ..> Owner : retrieves tasks and budget
+    Scheduler ..> Task : prioritizes

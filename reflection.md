@@ -9,9 +9,16 @@ My initial UML uses four focused classes: `Owner`, `Pet`, `Task`, and `Scheduler
 **b. Design changes**
 
 - Did your design change during implementation?
+    *Yes*
 - If yes, describe at least one change and why you made it.
-
----
+  - Add **IDs to Owner, Pet, and Task**. Reason: Names and task titles can repeat or change; IDs provide stable identification.
+  - Add **a pet association to Task**. Reason: Tasks retain their pet context when combined into one plan.
+  - Add **frequency to Task**. Reason: Distinguishes recurring activities from one-time tasks; initially, scheduling supports daily and once.
+  - Define **completed as completion for the current planning day** and add `reset_for_new_day()`. Reason: Daily tasks become eligible again on a new day; completed one-time tasks remain complete.
+  - Add **Owner.get_all_tasks()**. Reason: Provides one place to retrieve tasks across the owner's pets.
+  - Change **Scheduler.build_daily_plan() to accept an Owner**. Reason: Gives the scheduler access to all tasks and the owner's time budget.
+  - Pass **the time budget into Scheduler.explain_plan()**. Reason: Allows explanations to connect task selection to available time.
+  - Keep **domain classes independent of the interface**. Reason: Supports the CLI-first workflow and later Streamlit integration.
 
 ## 2. Scheduling Logic and Tradeoffs
 
