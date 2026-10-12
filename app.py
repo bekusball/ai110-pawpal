@@ -32,6 +32,10 @@ class FormValues:
     priority: str = "high"
     category: str = "exercise"
     frequency: str = "daily"
+    task_due_date: date = field(default_factory=date.today)
+    fixed_start_time: time | None = None
+    task_status_filter: str = "All"
+    task_pet_filter_id: str | None = None
     available_minutes: int = 90
     start_time: time = time(8)
 
@@ -48,6 +52,8 @@ class ProfileState:
     form_values: FormValues = field(default_factory=FormValues)
     plan: list[Task] | None = None
     plan_start_time: time = time(8)
+    plan_date: date = field(default_factory=date.today)
+    task_message: str | None = None
 
 
 # Session state
@@ -100,6 +106,11 @@ def restore_profile_inputs(owner: Owner, switched_owner: bool) -> None:
     values = profile_state(owner).form_values
     if values.selected_pet_id not in {pet.id for pet in owner.pets}:
         values.selected_pet_id = owner.pets[0].id if owner.pets else None
+    if values.task_pet_filter_id is not None and values.task_pet_filter_id not in {
+        pet.id for pet in owner.pets
+    }:
+        values.task_pet_filter_id = None
+        st.session_state[widget_key(owner, "task_pet_filter_id")] = None
     for field_name, value in vars(values).items():
         if field_name != "selected_pet_id" or value is not None:
             key = widget_key(owner, field_name)
@@ -140,6 +151,10 @@ def repair_pet_selection(owner: Owner) -> None:
         st.session_state.pop(key, None)
     else:
         st.session_state[key] = selected_pet_id
+    filter_key = widget_key(owner, "task_pet_filter_id")
+    if st.session_state.get(filter_key) not in {pet.id for pet in owner.pets}:
+        values.task_pet_filter_id = None
+        st.session_state[filter_key] = None
 
 
 def refresh_plan(owner: Owner) -> None:
@@ -151,6 +166,7 @@ def refresh_plan(owner: Owner) -> None:
     state = profile_state(owner)
     if state.plan is not None:
         state.plan = Scheduler().build_daily_plan(owner)
+        state.plan_date = date.today()
 
 
 # Owner, pet, and task actions
@@ -178,6 +194,9 @@ def create_task(
     priority: str,
     category: str,
     frequency: str = "daily",
+    *,
+    due_date: date | None = None,
+    fixed_start_time: time | None = None,
 ) -> Task:
     """Create a task after trimming and validating its text fields.
 
@@ -194,7 +213,26 @@ def create_task(
         priority=priority,
         category=category.strip(),
         frequency=frequency,
+        due_date=date.today() if due_date is None else due_date,
+        fixed_start_time=fixed_start_time,
     )
+
+
+def complete_tasks(owner: Owner, task_ids: set[str]) -> list[Task]:
+    """Complete selected pending occurrences and refresh an existing plan.
+
+    Iterate over a snapshot because daily completion appends a new occurrence.
+    Return new daily tasks so the UI can confirm their due dates.
+    """
+    scheduler = Scheduler()
+    successors = []
+    for task in owner.get_all_tasks():
+        if task.id in task_ids and not task.completed:
+            successor = scheduler.mark_task_complete(owner, task.id)
+            if successor is not None:
+                successors.append(successor)
+    refresh_plan(owner)
+    return successors
 
 
 def delete_pets(owner: Owner, pet_ids: set[str]) -> None:
@@ -253,23 +291,63 @@ def pet_rows(owner: Owner) -> list[dict]:
     return [{"_id": pet.id, "Pet": labels[pet.id]} for pet in owner.pets]
 
 
-def task_rows(owner: Owner) -> list[dict]:
-    """Build task display rows in pet/task insertion order with pet context."""
+def task_rows(
+    owner: Owner, *, completed: bool | None = None, pet_id: str | None = None,
+) -> list[dict]:
+    """Build filtered, priority-sorted rows with IDs, dates, and pet context."""
     labels = profile_labels(owner.pets)
-    rows = []
-    for pet in owner.pets:
-        for task in pet.tasks:
-            rows.append({
-                "_id": task.id,
-                "Pet": labels[pet.id],
-                "Task": task.title,
-                "Minutes": task.duration_minutes,
-                "Priority": task.priority,
-                "Category": task.category,
-                "Frequency": task.frequency,
-                "Completed": task.completed,
-            })
-    return rows
+    pet = next((pet for pet in owner.pets if pet.id == pet_id), None)
+    if pet_id is not None and pet is None:
+        return []
+    scheduler = Scheduler()
+    tasks = scheduler.filter_tasks(
+        owner.get_all_tasks(), completed=completed,
+        pet_name=pet.name if pet is not None else None,
+    )
+    # Names can repeat; the dropdown selects one pet by its stable ID.
+    if pet_id is not None:
+        tasks = [task for task in tasks if task.pet is pet]
+    return [
+        {
+            "_id": task.id,
+            "Pet": labels[task.pet.id] if task.pet is not None else "-",
+            "Task": task.title,
+            "Minutes": task.duration_minutes,
+            "Priority": task.priority,
+            "Category": task.category,
+            "Frequency": task.frequency,
+            "Due date": task.due_date,
+            "Fixed start": task.fixed_start_time.strftime("%H:%M")
+            if task.fixed_start_time is not None else "Flexible",
+            "Completed": task.completed,
+        }
+        for task in scheduler.sort_tasks(tasks)
+    ]
+
+
+def conflict_rows(owner: Owner) -> list[dict]:
+    """Format owner-wide fixed-time overlaps with full dates on each interval."""
+    labels = profile_labels(owner.pets)
+
+    def task_label(task: Task) -> str:
+        pet_label = labels[task.pet.id] if task.pet is not None else "-"
+        return f"{pet_label} / {task.title}"
+
+    def interval(task: Task) -> str:
+        assert task.fixed_start_time is not None
+        start = datetime.combine(task.due_date, task.fixed_start_time)
+        end = start + timedelta(minutes=task.duration_minutes)
+        return f"{start:%Y-%m-%d %H:%M} – {end:%Y-%m-%d %H:%M}"
+
+    return [
+        {
+            "First task": task_label(first),
+            "First interval": interval(first),
+            "Second task": task_label(second),
+            "Second interval": interval(second),
+        }
+        for first, second in Scheduler().detect_conflicts(owner.get_all_tasks())
+    ]
 
 
 def schedule_rows(plan: list[Task], start_time: time) -> list[dict]:
@@ -318,17 +396,22 @@ def skipped_task_rows(owner: Owner, plan: list[Task]) -> list[dict]:
 # Streamlit UI
 
 
-def deletion_selection(owner: Owner, kind: str, records: list[dict]) -> set[str]:
-    """Render a deletion table and return the selected object IDs.
+def selection_table(
+    owner: Owner, kind: str, records: list[dict], *, allow_completion: bool = False,
+) -> tuple[set[str], set[str]]:
+    """Render an action table and return deletion and pending-completion IDs.
 
-    Records must be nonempty and contain an _id field. Only the Delete
-    checkbox is editable; IDs remain hidden and all details are read-only.
+    IDs remain hidden and details are read-only. The key includes row identity
+    and completion state so stale selections cannot target changed occurrences.
     """
     # A changed row set gets fresh selection state so old edits cannot target new rows.
-    row_ids = "_".join(record["_id"] for record in records)
+    row_ids = "_".join(
+        f"{record['_id']}_{record.get('Completed', '')}" for record in records
+    )
     editor_key = f"{owner.id}_{kind}_{row_ids}"
+    actions = {"Complete": False, "Delete": False} if allow_completion else {"Delete": False}
     edited = st.data_editor(
-        [{"Delete": False, **record} for record in records],
+        [{**actions, **record} for record in records],
         key=editor_key,
         hide_index=True,
         column_config={
@@ -336,10 +419,24 @@ def deletion_selection(owner: Owner, kind: str, records: list[dict]) -> set[str]
             "Delete": st.column_config.CheckboxColumn(
                 "Delete", help=f"Select {kind} to remove with the trash button below.",
             ),
+            "Complete": st.column_config.CheckboxColumn(
+                "Complete", help="Select pending tasks, then mark them complete below.",
+            ),
+            "Due date": st.column_config.DateColumn("Due date", format="YYYY-MM-DD"),
         },
         disabled=list(records[0]),
     )
-    return {record["_id"] for record in edited if record["Delete"]}
+    deleted = {record["_id"] for record in edited if record["Delete"]}
+    completed = {
+        record["_id"] for record in edited
+        if allow_completion and record["Complete"] and not record["Completed"]
+    }
+    return deleted, completed
+
+
+def deletion_selection(owner: Owner, kind: str, records: list[dict]) -> set[str]:
+    """Render a deletion-only table and return selected object IDs."""
+    return selection_table(owner, kind, records)[0]
 
 
 def render_owner_form(owners: list[Owner]) -> None:
@@ -446,11 +543,22 @@ def render_task_form(owner: Owner) -> None:
         frequency = st.selectbox(
             "Frequency", ["daily", "once"], key=widget_key(owner, "frequency"),
         )
+        due_col, fixed_col = st.columns(2)
+        with due_col:
+            due_date = st.date_input("Due date", key=widget_key(owner, "task_due_date"))
+        with fixed_col:
+            fixed_start = st.time_input(
+                "Fixed start time (optional)", value=None,
+                key=widget_key(owner, "fixed_start_time"),
+            )
         submitted = st.form_submit_button("Add task")
 
     if submitted:
         try:
-            task = create_task(title, int(duration), priority, category, frequency)
+            task = create_task(
+                title, int(duration), priority, category, frequency,
+                due_date=due_date, fixed_start_time=fixed_start,
+            )
         except ValueError as error:
             st.error(str(error))
         else:
@@ -463,8 +571,24 @@ def render_task_form(owner: Owner) -> None:
 def render_task_section(owner: Owner) -> None:
     """Render task entry and the current-task table for an owner with pets."""
     st.subheader("Tasks")
-    render_task_form(owner)
+    state = profile_state(owner)
+    if state.task_message is not None:
+        st.success(state.task_message)
+        state.task_message = None
+    with st.expander("Add task", expanded=not owner.get_all_tasks()):
+        render_task_form(owner)
     render_tasks(owner)
+    conflicts = conflict_rows(owner)
+    if conflicts:
+        label = "overlap" if len(conflicts) == 1 else "overlaps"
+        st.warning(f"{len(conflicts)} fixed-time {label}. Review these tasks before planning.")
+        st.table(conflicts)
+        st.caption("Fixed times are checked across all pets and due dates; the plan uses priority and budget.")
+    elif any(
+        task.fixed_start_time is not None
+        for task in Scheduler().filter_tasks(owner.get_all_tasks(), completed=False)
+    ):
+        st.success("No fixed-time overlaps.")
 
 
 def render_pets(owner: Owner) -> None:
@@ -480,19 +604,59 @@ def render_pets(owner: Owner) -> None:
 
 
 def render_tasks(owner: Owner) -> None:
-    """Display task details and delete selected tasks only from this owner."""
+    """Display filtered care tasks and apply ID-based completion or deletion."""
     tasks = owner.get_all_tasks()
     if not tasks:
         st.info("No tasks yet. Add one above.")
         return
     st.write("Current tasks:")
-    selected = deletion_selection(owner, "tasks", task_rows(owner))
-    if st.button(
-        "🗑️ Delete selected tasks", key=widget_key(owner, "delete_tasks"),
-        disabled=not selected,
-    ):
-        delete_tasks(owner, selected)
-        st.rerun()
+    status_col, pet_col = st.columns(2)
+    with status_col:
+        status = st.selectbox(
+            "Completion status", ["All", "Pending", "Completed"],
+            key=widget_key(owner, "task_status_filter"),
+        )
+    labels = profile_labels(owner.pets)
+    with pet_col:
+        pet_id = st.selectbox(
+            "Filter by pet", [None, *labels],
+            format_func=lambda pet_id: "All pets" if pet_id is None else labels[pet_id],
+            key=widget_key(owner, "task_pet_filter_id"),
+        )
+    completed = {"All": None, "Pending": False, "Completed": True}[status]
+    records = task_rows(owner, completed=completed, pet_id=pet_id)
+    if not records:
+        st.info("No tasks match these filters.")
+        return
+    label = "task" if len(records) == 1 else "tasks"
+    st.caption(f"{len(records)} {label} shown · High → medium → low priority")
+    deleted, completed_ids = selection_table(owner, "tasks", records, allow_completion=True)
+    complete_col, delete_col = st.columns(2)
+    with complete_col:
+        if st.button(
+            "Mark selected complete", key=widget_key(owner, "complete_tasks"),
+            disabled=not completed_ids, type="primary",
+        ):
+            successors = complete_tasks(owner, completed_ids)
+            label = "task" if len(completed_ids) == 1 else "tasks"
+            message = f"Completed {len(completed_ids)} {label}."
+            if successors:
+                label = "occurrence" if len(successors) == 1 else "occurrences"
+                message += (
+                    f" {len(successors)} daily {label} due "
+                    f"{successors[0].due_date.isoformat()}."
+                )
+            profile_state(owner).task_message = message
+            save_profile_inputs(owner)
+            st.rerun()
+    with delete_col:
+        if st.button(
+            "🗑️ Delete selected tasks", key=widget_key(owner, "delete_tasks"),
+            disabled=not deleted,
+        ):
+            delete_tasks(owner, deleted)
+            save_profile_inputs(owner)
+            st.rerun()
 
 
 def render_schedule(owner: Owner, plan: list[Task], start_time: time) -> None:
@@ -515,11 +679,18 @@ def render_schedule(owner: Owner, plan: list[Task], start_time: time) -> None:
         st.info("No tasks yet. Add one above before generating a schedule.")
     elif all(task.completed for task in owner.get_all_tasks()):
         st.info("All tasks are already completed.")
+    elif not any(
+        task.due_date <= date.today()
+        for task in scheduler.filter_tasks(owner.get_all_tasks(), completed=False)
+    ):
+        st.info("No tasks are due today. Upcoming tasks remain in the task list.")
     else:
         st.info("No incomplete tasks fit within the available time.")
 
     skipped = skipped_task_rows(owner, plan)
     if skipped:
+        label = "task exceeds" if len(skipped) == 1 else "tasks exceed"
+        st.warning(f"{len(skipped)} {label} today's remaining time budget.")
         st.markdown("### Skipped (insufficient time)")
         st.table(skipped)
     else:
@@ -531,6 +702,9 @@ def render_schedule_form(owner: Owner) -> None:
     st.divider()
     st.subheader("Build Schedule")
     st.caption("Tasks run consecutively from the start time, in priority order.")
+    state = profile_state(owner)
+    if state.plan is not None and state.plan_date != date.today():
+        refresh_plan(owner)
     budget_key = widget_key(owner, "available_minutes")
     st.session_state.setdefault(budget_key, owner.available_minutes)
     with st.form(widget_key(owner, "schedule_form")):
@@ -548,6 +722,8 @@ def render_schedule_form(owner: Owner) -> None:
         state = profile_state(owner)
         state.plan = Scheduler().build_daily_plan(owner)
         state.plan_start_time = start_time
+        state.plan_date = date.today()
+        st.success("Today's schedule is ready.")
 
     state = profile_state(owner)
     if state.plan is not None:
@@ -559,7 +735,7 @@ def render_schedule_form(owner: Owner) -> None:
 
 def main() -> None:
     """Render the page in owner, pet, task, and schedule order."""
-    st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
+    st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="wide")
     st.title("🐾 PawPal+")
     st.markdown("Choose an owner profile, add their pets, and plan their care tasks.")
 

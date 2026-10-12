@@ -28,13 +28,11 @@ My initial UML uses four focused classes: `Owner`, `Pet`, `Task`, and `Scheduler
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+The scheduler considers priority, duration, completion status, due date, and the owner's available minutes. I focused on urgency and a realistic daily time budget so the plan is useful and achievable. Fixed start times provide conflict warnings across pets, and daily frequency determines whether completion creates a task for tomorrow.
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
+The scheduler considers tasks in priority order, skips any that exceed the remaining budget, and keeps checking later tasks. This can fit a shorter, lower-priority task after a longer task is skipped. It does not guarantee the best possible combination, but the behavior is simple to understand, explain, and test for this project.
 
 ---
 
@@ -42,13 +40,11 @@ My initial UML uses four focused classes: `Owner`, `Pet`, `Task`, and `Scheduler
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
+I used AI to develop the domain classes, build a CLI demo, add scheduling algorithms and tests, and connect those features to Streamlit. Specific prompts about completion rules, date calculations, filtering, and conflict reporting were the most helpful. Breaking the work into these stages made each change easier to review.
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+I clarified that one-time tasks should remain completed and that daily tasks should create a separate occurrence due tomorrow. I also chose conflict reporting across all of an owner's pets. I checked those decisions through the CLI output and focused tests before exposing them in the UI, including repeated completion and duplicate-name cases.
 
 ---
 
@@ -56,13 +52,11 @@ My initial UML uses four focused classes: `Owner`, `Pet`, `Task`, and `Scheduler
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+I tested priority ordering, budget limits, filtering, completion history, daily recurrence, due dates, and fixed-time overlaps, including calendar and midnight boundaries. UI tests check creation, completion and deletion buttons, combined filters, duplicate names, profile isolation, and saved-plan refreshes. These checks help prevent a correct backend from being connected to the wrong task or stale UI state.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+The full suite passes 219 tests, so I am confident in the core behaviors and tested UI workflows. The automated UI checks use Streamlit AppTest. I would next check the interface in a live browser across different screen sizes and longer-running sessions, then add and test persistence across browser reloads.
 
 ---
 
@@ -70,12 +64,12 @@ My initial UML uses four focused classes: `Owner`, `Pet`, `Task`, and `Scheduler
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+I am most satisfied with updating the UI to fit the new functionality properly. Users can now see sorted and filtered tasks, complete them, view tomorrow's recurring occurrences, and understand conflict warnings. Connecting these actions to the backend made the app feel usable as a complete workflow.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+I would improve session persistence so profiles, tasks, and plans survive a browser reload, not just Streamlit reruns and profile switches. Browser storage would be one option to explore. That would make the app more useful for tracking care over multiple visits.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+Working in chunks is the way to go. Starting with a CLI demo made the implementation clearer for both me and the AI. The rough early UI was a useful template: it gave me room to develop my own ideas and creativity before polishing how the app looked and worked.

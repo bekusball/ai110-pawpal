@@ -70,7 +70,7 @@ def rows(ui: AppTest, column: str) -> list[dict]:
     return next(
         table.value for table in [*ui.table, *ui.dataframe]
         if column in table.value.columns
-    ).drop(columns=["_id", "Delete"], errors="ignore").to_dict("records")
+    ).drop(columns=["_id", "Delete", "Complete"], errors="ignore").to_dict("records")
 
 
 def select_for_deletion(ui: AppTest, kind: str, row_indexes: list[int]) -> None:
@@ -83,6 +83,16 @@ def select_for_deletion(ui: AppTest, kind: str, row_indexes: list[int]) -> None:
         "edited_rows": {index: {"Delete": True} for index in row_indexes},
         "added_rows": [],
         "deleted_rows": [],
+    }
+    ui.run()
+    assert not ui.exception
+
+
+def select_for_completion(ui: AppTest, row_indexes: list[int]) -> None:
+    editor = next(table for table in ui.dataframe if "Category" in table.value.columns)
+    ui.session_state[editor.key] = {
+        "edited_rows": {index: {"Complete": True} for index in row_indexes},
+        "added_rows": [], "deleted_rows": [],
     }
     ui.run()
     assert not ui.exception
@@ -157,6 +167,7 @@ def test_task_form_routes_to_the_selected_pet_and_displays_all_fields(profile: A
     assert rows(profile, "Category") == [{
         "Pet": "Mochi (dog)", "Task": "Nail trim", "Minutes": 15,
         "Priority": "low", "Category": "grooming", "Frequency": "once",
+        "Due date": date.today(), "Fixed start": "Flexible",
         "Completed": False,
     }]
     assert "Mochi (dog): Nail trim" in profile.success[0].value
@@ -806,3 +817,196 @@ def test_existing_session_state_converts_without_losing_forms_or_plan_references
     assert not app.exception
     assert app.session_state.profile_states[owner.id] is state
     assert state.plan is saved_plan
+
+
+def test_task_form_accepts_due_dates_and_optional_fixed_times(profile: AppTest) -> None:
+    due = date.today() + timedelta(days=2)
+    profile.date_input(key=key(profile, "task_due_date")).set_value(due)
+    profile.time_input(key=key(profile, "fixed_start_time")).set_value(time(8, 15))
+    add_task(profile, "Appointment", 30)
+
+    task = active_owner(profile).get_all_tasks()[0]
+    assert task.due_date == due and task.fixed_start_time == time(8, 15)
+    assert rows(profile, "Category")[0]["Due date"] == due
+    assert rows(profile, "Category")[0]["Fixed start"] == "08:15"
+    assert "No fixed-time overlaps." in [message.value for message in profile.success]
+    submit(profile, "Generate schedule")
+    assert [metric.value for metric in profile.metric] == ["0", "0", "90"]
+    assert "No tasks are due today. Upcoming tasks remain in the task list." in [
+        message.value for message in profile.info
+    ]
+
+
+def test_current_tasks_are_priority_sorted_without_reordering_domain_tasks(profile: AppTest) -> None:
+    add_task(profile, "Brush", 15, "low")
+    add_task(profile, "Play", 10, "medium")
+    add_task(profile, "Feed", 5, "high")
+    add_task(profile, "Walk", 20, "high")
+
+    assert [row["Task"] for row in rows(profile, "Category")] == ["Feed", "Walk", "Play", "Brush"]
+    assert [task.title for task in active_owner(profile).get_all_tasks()] == ["Brush", "Play", "Feed", "Walk"]
+
+
+def test_status_and_pet_filters_combine_and_distinguish_duplicate_names(profile: AppTest) -> None:
+    first = active_owner(profile).pets[0]
+    add_task(profile, "First pet")
+    second = add_pet(profile, "Mochi", "cat")
+    add_task(profile, "Second pet")
+    second.tasks[0].completed = True
+    submit(profile, "Generate schedule")
+    saved_plan = rows(profile, "Time")
+
+    profile.selectbox(key=key(profile, "task_pet_filter_id")).set_value(second.id).run()
+    profile.selectbox(key=key(profile, "task_status_filter")).set_value("Completed").run()
+    assert [row["Task"] for row in rows(profile, "Category")] == ["Second pet"]
+    assert profile.button(key=key(profile, "complete_tasks")).disabled
+    profile.selectbox(key=key(profile, "task_status_filter")).set_value("Pending").run()
+    assert "No tasks match these filters." in [message.value for message in profile.info]
+    assert not any("Category" in table.value.columns for table in profile.dataframe)
+
+    profile.selectbox(key=key(profile, "task_pet_filter_id")).set_value(first.id).run()
+    assert [row["Task"] for row in rows(profile, "Category")] == ["First pet"]
+    assert rows(profile, "Time") == saved_plan
+
+
+def test_bulk_completion_creates_daily_successor_and_refreshes_saved_schedule(profile: AppTest) -> None:
+    profile.time_input(key=key(profile, "fixed_start_time")).set_value(time(8))
+    add_task(profile, "Feed", 10)
+    owner = active_owner(profile)
+    daily = owner.get_all_tasks()[0]
+    second = add_pet(profile, "Luna", "cat")
+    profile.time_input(key=key(profile, "fixed_start_time")).set_value(None)
+    profile.selectbox(key=key(profile, "frequency")).set_value("once")
+    add_task(profile, "Nail trim", 5, "low")
+    once = second.tasks[0]
+    profile.number_input(key=key(profile, "available_minutes")).set_value(15)
+    profile.time_input(key=key(profile, "start_time")).set_value(time(9, 30))
+    submit(profile, "Generate schedule")
+    profile.number_input(key=key(profile, "available_minutes")).set_value(0)
+    profile.time_input(key=key(profile, "start_time")).set_value(time(12))
+
+    select_for_completion(profile, [0, 1])
+    submit(profile, "Mark selected complete")
+
+    successor = daily.pet.tasks[-1]
+    assert daily.completed is once.completed is True
+    assert successor.id != daily.id and successor.completed is False
+    assert successor.due_date == date.today() + timedelta(days=1)
+    assert successor.fixed_start_time == time(8)
+    assert len(owner.get_all_tasks()) == 3
+    assert second.tasks == [once]
+    assert owner.available_minutes == 15
+    assert profile.session_state.profile_states[owner.id].plan_start_time == time(9, 30)
+    assert [metric.value for metric in profile.metric] == ["0", "0", "15"]
+    assert profile.button(key=key(profile, "complete_tasks")).disabled
+    assert any("1 daily occurrence due" in message.value for message in profile.success)
+    assert not any("Skipped (insufficient time)" in heading.value for heading in profile.markdown)
+
+
+def test_once_completion_resets_selection_and_does_not_repeat(profile: AppTest) -> None:
+    profile.selectbox(key=key(profile, "frequency")).set_value("once")
+    add_task(profile, "Nail trim")
+    task = active_owner(profile).get_all_tasks()[0]
+    select_for_completion(profile, [0])
+    submit(profile, "Mark selected complete")
+
+    assert task.completed is True
+    assert active_owner(profile).get_all_tasks() == [task]
+    assert profile.button(key=key(profile, "complete_tasks")).disabled
+    select_for_completion(profile, [0])
+    assert profile.button(key=key(profile, "complete_tasks")).disabled
+    assert active_owner(profile).get_all_tasks() == [task]
+
+
+def test_completion_targets_one_id_when_titles_match(profile: AppTest) -> None:
+    add_task(profile, "Feed")
+    add_task(profile, "Feed")
+    first, second = active_owner(profile).get_all_tasks()
+    select_for_completion(profile, [1])
+    submit(profile, "Mark selected complete")
+
+    assert first.completed is False and second.completed is True
+    assert len(active_owner(profile).get_all_tasks()) == 3
+
+
+def test_owner_wide_conflict_warning_survives_filters_and_clears_after_completion(profile: AppTest) -> None:
+    today = date.today()
+    profile.selectbox(key=key(profile, "frequency")).set_value("once")
+    profile.time_input(key=key(profile, "fixed_start_time")).set_value(time(23, 50))
+    add_task(profile, "Late walk", 20)
+    add_pet(profile, "Luna", "cat")
+    profile.date_input(key=key(profile, "task_due_date")).set_value(today + timedelta(days=1))
+    profile.time_input(key=key(profile, "fixed_start_time")).set_value(time(0, 5))
+    add_task(profile, "Feeding", 10)
+    luna = active_owner(profile).pets[1]
+
+    assert len(profile.warning) == 1 and "1 fixed-time overlap" in profile.warning[0].value
+    conflicts = rows(profile, "First task")
+    assert conflicts[0]["First task"] == "Mochi (dog) / Late walk"
+    assert conflicts[0]["Second task"] == "Luna (cat) / Feeding"
+    assert conflicts[0]["First interval"] == (
+        f"{today.isoformat()} 23:50 – {(today + timedelta(days=1)).isoformat()} 00:10"
+    )
+    profile.selectbox(key=key(profile, "task_pet_filter_id")).set_value(luna.id).run()
+    assert rows(profile, "First task") == conflicts
+    select_for_completion(profile, [0])
+    submit(profile, "Mark selected complete")
+    assert not profile.warning
+    assert "No fixed-time overlaps." in [message.value for message in profile.success]
+
+
+def test_filter_changes_clear_stale_deletion_marks(profile: AppTest) -> None:
+    add_task(profile, "First pet")
+    second = add_pet(profile, "Luna", "cat")
+    add_task(profile, "Second pet")
+    select_for_deletion(profile, "tasks", [0])
+    assert not profile.button(key=key(profile, "delete_tasks")).disabled
+
+    profile.selectbox(key=key(profile, "task_pet_filter_id")).set_value(second.id).run()
+
+    assert profile.button(key=key(profile, "delete_tasks")).disabled
+    assert [row["Task"] for row in rows(profile, "Category")] == ["Second pet"]
+
+
+def test_new_fields_and_filters_restore_per_owner_and_repair_after_pet_deletion(profile: AppTest) -> None:
+    first = active_owner(profile)
+    pet = first.pets[0]
+    due = date.today() + timedelta(days=3)
+    profile.date_input(key=key(profile, "task_due_date")).set_value(due)
+    profile.time_input(key=key(profile, "fixed_start_time")).set_value(time(10))
+    add_task(profile)
+    profile.selectbox(key=key(profile, "task_pet_filter_id")).set_value(pet.id).run()
+    profile.selectbox(key=key(profile, "task_status_filter")).set_value("Pending").run()
+    second = add_owner(profile, "Sam")
+    add_pet(profile, "Luna", "cat")
+    add_task(profile, "Sam's task")
+    assert second.get_all_tasks()[0].fixed_start_time is None
+
+    profile.selectbox(key="owner_picker").set_value(first.id).run()
+
+    assert profile.date_input(key=key(profile, "task_due_date")).value == due
+    assert profile.time_input(key=key(profile, "fixed_start_time")).value == time(10)
+    assert profile.selectbox(key=key(profile, "task_pet_filter_id")).value == pet.id
+    assert profile.selectbox(key=key(profile, "task_status_filter")).value == "Pending"
+    select_for_completion(profile, [0])
+    submit(profile, "Mark selected complete")
+    assert second.get_all_tasks()[0].completed is False
+    add_pet(profile, "Biscuit")
+    add_task(profile, "Biscuit's task")
+    select_for_deletion(profile, "pets", [0])
+    submit(profile, "🗑️ Delete selected pets")
+    assert profile.selectbox(key=key(profile, "task_pet_filter_id")).value is None
+    assert not profile.exception
+
+
+def test_saved_plan_refreshes_when_the_calendar_day_changes(profile: AppTest) -> None:
+    add_task(profile)
+    submit(profile, "Generate schedule")
+    state = profile.session_state.profile_states[active_owner(profile).id]
+    state.plan = []
+    state.plan_date = date.today() - timedelta(days=1)
+
+    profile.run()
+
+    assert state.plan_date == date.today()
+    assert [row["Task"] for row in rows(profile, "Time")] == ["Feeding"]

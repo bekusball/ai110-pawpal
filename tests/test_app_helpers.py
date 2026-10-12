@@ -69,6 +69,7 @@ def test_task_rows_retain_completed_history_and_distinct_ids() -> None:
             "_id": task.id, "Pet": "Mochi (dog)", "Task": "Feed",
             "Minutes": 10, "Priority": "high", "Category": "food",
             "Frequency": "daily", "Completed": done,
+            "Due date": date.today(), "Fixed start": "Flexible",
         }
         for task, done in ((completed, True), (pending, False))
     ]
