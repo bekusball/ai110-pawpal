@@ -28,7 +28,7 @@ class TestTask:
         assert task.due_date == date(2026, 10, 12)
         assert task.fixed_start_time == time(8)
 
-    @pytest.mark.parametrize("duration", [0, -1, 1.5, "10", True, None])
+    @pytest.mark.parametrize("duration", [0, -1, 1.5, "10", True, False, None])
     def test_rejects_invalid_duration(self, duration: object) -> None:
         with pytest.raises(ValueError, match="duration_minutes"):
             Task("Feeding", duration, "high", "food") # pyright: ignore[reportArgumentType]
@@ -154,13 +154,23 @@ class TestOwner:
         owner.add_pet(pet)
         owner.add_pet(pet)
 
-    @pytest.mark.parametrize("minutes", [-1, 1.5, "45", True, None])
+    @pytest.mark.parametrize("minutes", [-1, 1.5, "45", True, False, None])
     def test_rejects_invalid_budget(self, minutes: object) -> None:
         with pytest.raises(ValueError, match="available_minutes"):
             Owner("Jordan", minutes) # pyright: ignore[reportArgumentType]
 
     def test_accepts_zero_budget(self) -> None:
         assert Owner("Jordan", 0).available_minutes == 0
+
+    def test_distinct_pets_with_matching_names_are_both_attached(self, owner: Owner) -> None:
+        first = Pet("Mochi", "dog")
+        second = Pet("Mochi", "dog")
+        owner.add_pet(first)
+        owner.add_pet(second)
+        owner.add_pet(first)
+
+        assert owner.pets == [first, second]
+        assert owner.pets[0] is first and owner.pets[1] is second
 
     def test_get_all_tasks_preserves_pet_and_task_order(
         self, owner: Owner, pet: Pet, morning_walk: Task, feeding: Task, nail_trim: Task

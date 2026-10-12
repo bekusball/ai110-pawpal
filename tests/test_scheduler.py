@@ -58,6 +58,84 @@ class TestSortTasks:
 
 
 class TestBuildDailyPlan:
+    @pytest.mark.parametrize("budget, titles", [
+        (0, []),
+        (1, []),
+        (2, ["Brush"]),
+        (4, ["Play"]),
+        (6, ["Feed"]),
+        (8, ["Walk"]),
+        (10, ["Walk", "Brush"]),
+        (12, ["Walk", "Play"]),
+        (14, ["Walk", "Feed"]),
+        (18, ["Walk", "Feed", "Play"]),
+        (20, ["Walk", "Feed", "Play", "Brush"]),
+    ])
+    def test_budget_boundaries_across_pets(
+        self, scheduler: Scheduler, budget: int, titles: list[str],
+    ) -> None:
+        today = date(2026, 10, 11)
+        mochi = Pet("Mochi", "dog")
+        luna = Pet("Luna", "cat")
+        brush = Task("Brush", 2, "low", "grooming", due_date=today)
+        walk = Task("Walk", 8, "high", "exercise", due_date=today)
+        play = Task("Play", 4, "medium", "enrichment", due_date=today)
+        feed = Task("Feed", 6, "high", "food", due_date=today)
+        for pet, task in ((mochi, brush), (mochi, walk), (luna, play), (luna, feed)):
+            pet.add_task(task)
+        owner = Owner("Jordan", budget, pets=[mochi, luna])
+        tasks_by_title = {task.title: task for task in owner.get_all_tasks()}
+
+        plan = scheduler.build_daily_plan(owner, plan_date=today)
+
+        assert plan == [tasks_by_title[title] for title in titles]
+        assert all(task is tasks_by_title[task.title] for task in plan)
+        assert sum(task.duration_minutes for task in plan) <= budget
+        assert owner.available_minutes == budget
+        assert mochi.tasks == [brush, walk]
+        assert luna.tasks == [play, feed]
+        assert all(not task.completed for task in owner.get_all_tasks())
+
+    def test_replanning_uses_current_budget_and_returns_independent_lists(
+        self, scheduler: Scheduler, owner_with_tasks: Owner,
+        morning_walk: Task, feeding: Task,
+    ) -> None:
+        owner_with_tasks.available_minutes = 40
+        first = scheduler.build_daily_plan(owner_with_tasks)
+        owner_with_tasks.available_minutes = 10
+        second = scheduler.build_daily_plan(owner_with_tasks)
+        first.clear()
+        owner_with_tasks.available_minutes = 40
+
+        assert second == [feeding]
+        assert scheduler.build_daily_plan(owner_with_tasks) == [morning_walk, feeding]
+        assert len(owner_with_tasks.get_all_tasks()) == 3
+
+    def test_overdue_dates_do_not_break_priority_ties(self, scheduler: Scheduler) -> None:
+        today = date(2026, 10, 11)
+        pet = Pet("Mochi", "dog")
+        due = Task("Today", 10, "high", "care", due_date=today)
+        overdue = Task("Overdue", 10, "high", "care", due_date=date(2026, 10, 1))
+        for task in (due, overdue):
+            pet.add_task(task)
+        owner = Owner("Jordan", 10, pets=[pet])
+
+        assert scheduler.build_daily_plan(owner, plan_date=today) == [due]
+
+    def test_fixed_time_conflicts_do_not_change_budget_selection(
+        self, scheduler: Scheduler,
+    ) -> None:
+        today = date(2026, 10, 11)
+        pet = Pet("Mochi", "dog")
+        low = Task("Brush", 10, "low", "care", due_date=today, fixed_start_time=time(8))
+        high = Task("Feed", 10, "high", "food", due_date=today, fixed_start_time=time(8, 5))
+        for task in (low, high):
+            pet.add_task(task)
+        owner = Owner("Jordan", 20, pets=[pet])
+
+        assert scheduler.detect_conflicts(owner.get_all_tasks()) == [(low, high)]
+        assert scheduler.build_daily_plan(owner, plan_date=today) == [high, low]
+
     def test_exact_budget_fit_is_included(
         self, scheduler: Scheduler, owner_with_tasks: Owner,
         morning_walk: Task, feeding: Task
@@ -156,6 +234,23 @@ class TestBuildDailyPlan:
 
 
 class TestExplainPlan:
+    def test_explanations_preserve_order_and_handle_unattached_tasks(
+        self, scheduler: Scheduler,
+    ) -> None:
+        pet = Pet("Luna", "cat")
+        feed = Task("Feed", 5, "high", "food")
+        pet.add_task(feed)
+        brush = Task("Brush", 10, "low", "grooming")
+        plan = [feed, brush]
+
+        assert scheduler.explain_plan(plan, 15) == [
+            "Luna / Feed: high priority; 5 min fits in 15 min; 10 min left.",
+            "Brush: low priority; 10 min fits in 10 min; 0 min left.",
+        ]
+        assert plan == [feed, brush]
+        assert feed.pet is pet and brush.pet is None
+        assert feed.completed is brush.completed is False
+
     def test_explanations_reference_pet_priority_duration_and_budget(
         self, scheduler: Scheduler, owner_with_tasks: Owner, morning_walk: Task
     ) -> None:
@@ -205,6 +300,27 @@ def filter_candidates() -> list[Task]:
 
 
 class TestFilterTasks:
+    def test_pet_names_use_unicode_casefolding(self, scheduler: Scheduler) -> None:
+        pet = Pet(" Straße ", "dog")
+        task = Task("Walk", 10, "high", "exercise")
+        pet.add_task(task)
+
+        assert scheduler.filter_tasks([task], pet_name=" STRASSE ") == [task]
+        assert scheduler.filter_tasks([task], pet_name="Strass") == []
+        assert scheduler.filter_tasks([task], pet_name="   ") == []
+
+    def test_filter_preserves_repeated_references_in_caller_order(
+        self, scheduler: Scheduler, filter_candidates: list[Task],
+    ) -> None:
+        first, completed, second = filter_candidates[:3]
+        candidates = [second, completed, first, second]
+
+        result = scheduler.filter_tasks(candidates, completed=False, pet_name="Mochi")
+
+        assert result == [second, first, second]
+        assert result[0] is result[2] is second
+        assert candidates == [second, completed, first, second]
+
     @pytest.mark.parametrize("completed, pet_name, indexes", [
         (None, None, [0, 1, 2, 3, 4]),
         (False, None, [0, 2, 4]),
@@ -243,6 +359,46 @@ class TestFilterTasks:
 
 
 class TestCompleteTask:
+    def test_completion_on_a_later_pet_is_isolated_to_its_occurrence(
+        self, scheduler: Scheduler,
+    ) -> None:
+        today = date(2026, 10, 11)
+        pets = [Pet("Mochi", "dog"), Pet("Mochi", "dog"), Pet("Mochi", "dog")]
+        tasks = [Task("Feed", 10, "high", "food", due_date=today) for _ in pets]
+        for pet, task in zip(pets, tasks):
+            pet.add_task(task)
+        owner = Owner("Jordan", 30, pets=pets[:2])
+        other_owner = Owner("Sam", 30, pets=[pets[2]])
+
+        successor = scheduler.mark_task_complete(owner, tasks[1].id, today=today)
+
+        assert successor is not None and successor.pet is pets[1]
+        assert pets[0].tasks == [tasks[0]]
+        assert pets[1].tasks == [tasks[1], successor]
+        assert other_owner.get_all_tasks() == [tasks[2]]
+        assert [task.completed for task in tasks] == [False, True, False]
+        assert owner.available_minutes == other_owner.available_minutes == 30
+
+    def test_successor_details_are_independent_of_the_completed_occurrence(
+        self, scheduler: Scheduler, owner_with_tasks: Owner, feeding: Task,
+    ) -> None:
+        successor = scheduler.mark_task_complete(
+            owner_with_tasks, feeding.id, today=date(2026, 10, 11),
+        )
+        assert successor is not None
+        successor.title = "Evening feed"
+        successor.duration_minutes = 5
+        successor.priority = "medium"
+        successor.category = "care"
+        successor.fixed_start_time = time(18)
+
+        assert feeding.title == "Feeding"
+        assert feeding.duration_minutes == 10
+        assert feeding.priority == "high"
+        assert feeding.category == "food"
+        assert feeding.fixed_start_time is None
+        assert feeding.completed is True and successor.completed is False
+
     def test_daily_completion_retains_history_and_copies_details(
         self, scheduler: Scheduler, owner_with_tasks: Owner, morning_walk: Task,
     ) -> None:
@@ -359,6 +515,42 @@ class TestCompleteTask:
 
 
 class TestDatedPlanning:
+    def test_recurring_lifecycle_keeps_history_and_plans_only_due_occurrences(
+        self, scheduler: Scheduler,
+    ) -> None:
+        today = date(2026, 12, 30)
+        pet = Pet("Mochi", "dog")
+        daily = Task("Feed", 10, "high", "food", due_date=today, fixed_start_time=time(8))
+        once = Task("Nail trim", 5, "low", "grooming", frequency="once", due_date=today)
+        for task in (daily, once):
+            pet.add_task(task)
+        owner = Owner("Jordan", 15, pets=[pet])
+        assert scheduler.build_daily_plan(owner, plan_date=today) == [daily, once]
+        assert scheduler.mark_task_complete(owner, once.id, today=today) is None
+        history = [daily, once]
+        current = daily
+
+        for offset in range(3):
+            completion_date = today + timedelta(days=offset)
+            assert scheduler.build_daily_plan(owner, plan_date=completion_date) == [current]
+            successor = scheduler.mark_task_complete(owner, current.id, today=completion_date)
+            assert successor is not None
+            if offset:
+                history.append(current)
+            assert scheduler.mark_task_complete(owner, current.id, today=completion_date) is None
+            assert scheduler.filter_tasks(owner.get_all_tasks(), completed=True) == history
+            assert scheduler.filter_tasks(owner.get_all_tasks(), completed=False) == [successor]
+            assert scheduler.build_daily_plan(owner, plan_date=completion_date) == []
+            assert successor.due_date == completion_date + timedelta(days=1)
+            assert successor.pet is pet
+            assert successor.fixed_start_time == time(8)
+            current = successor
+
+        assert scheduler.build_daily_plan(owner, plan_date=date(2027, 1, 2)) == [current]
+        assert len(pet.tasks) == len({task.id for task in pet.tasks}) == 5
+        assert all(task.completed for task in history)
+        assert owner.available_minutes == 15
+
     def test_daily_successor_is_excluded_today_and_included_tomorrow(
         self, scheduler: Scheduler, owner: Owner, pet: Pet, feeding: Task,
     ) -> None:
@@ -403,6 +595,61 @@ class TestDatedPlanning:
 
 
 class TestDetectConflicts:
+    @pytest.mark.parametrize("start_date, next_date", [
+        (date(2026, 10, 31), date(2026, 11, 1)),
+        (date(2026, 12, 31), date(2027, 1, 1)),
+        (date(2028, 2, 28), date(2028, 2, 29)),
+    ])
+    def test_midnight_conflicts_across_calendar_boundaries(
+        self, scheduler: Scheduler, start_date: date, next_date: date,
+    ) -> None:
+        late = Task("Late care", 20, "low", "care", due_date=start_date, fixed_start_time=time(23, 50))
+        early = Task("Early care", 5, "high", "care", due_date=next_date, fixed_start_time=time(0, 5))
+
+        assert scheduler.detect_conflicts([late, early]) == [(late, early)]
+        assert scheduler.detect_conflicts([early, late]) == [(early, late)]
+
+    def test_long_interval_contains_a_task_two_days_later(self, scheduler: Scheduler) -> None:
+        long = Task(
+            "Long care", 1500, "low", "care",
+            due_date=date(2026, 10, 11), fixed_start_time=time(23, 30),
+        )
+        inside = Task(
+            "Feeding", 10, "high", "food",
+            due_date=date(2026, 10, 13), fixed_start_time=time(0, 15),
+        )
+        adjacent = Task(
+            "Walk", 10, "high", "exercise",
+            due_date=date(2026, 10, 13), fixed_start_time=time(0, 30),
+        )
+
+        assert scheduler.detect_conflicts([long, inside, adjacent]) == [(long, inside)]
+
+    def test_future_occurrences_are_reported_and_completion_removes_a_conflict(
+        self, scheduler: Scheduler,
+    ) -> None:
+        today = date(2026, 10, 11)
+        tomorrow = today + timedelta(days=1)
+        pet = Pet("Mochi", "dog")
+        first = Task("Walk", 30, "high", "care", due_date=tomorrow, fixed_start_time=time(8))
+        second = Task("Feed", 10, "high", "care", due_date=tomorrow, fixed_start_time=time(8, 5), frequency="once")
+        for task in (first, second):
+            pet.add_task(task)
+        owner = Owner("Jordan", 40, pets=[pet])
+
+        assert scheduler.build_daily_plan(owner, plan_date=today) == []
+        assert scheduler.detect_conflicts(owner.get_all_tasks()) == [(first, second)]
+        assert scheduler.mark_task_complete(owner, second.id, today=tomorrow) is None
+        assert scheduler.detect_conflicts(owner.get_all_tasks()) == []
+        assert scheduler.build_daily_plan(owner, plan_date=tomorrow) == [first]
+
+    def test_repeating_the_same_task_cannot_create_a_self_conflict(
+        self, scheduler: Scheduler,
+    ) -> None:
+        task = Task("Walk", 30, "high", "care", fixed_start_time=time(8))
+
+        assert scheduler.detect_conflicts([task, task, task]) == []
+
     @pytest.mark.parametrize("offset, start, duration, overlaps", [
         (0, time(8, 15), 20, True),
         (0, time(8, 5), 10, True),

@@ -9,7 +9,7 @@ import sys
 import pytest
 
 import main as demo
-from pawpal_system import Scheduler
+from pawpal_system import Owner, Pet, Scheduler, Task
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -161,3 +161,64 @@ def test_cli_help_describes_the_algorithms_flag() -> None:
     assert "--algorithms" in result.stdout
     assert "filtering, completion, recurrence, and conflicts" in result.stdout
     assert result.stderr == ""
+
+
+@pytest.mark.parametrize("state", ["empty", "completed", "future"])
+def test_cli_empty_plan_does_not_mislabel_ineligible_tasks_as_budget_skips(
+    state: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    owner = Owner("Jordan", 30)
+    if state != "empty":
+        pet = Pet("Mochi", "dog")
+        task = Task(
+            "Ineligible care", 10, "high", "care", completed=state == "completed",
+            due_date=date.today() + timedelta(days=1) if state == "future" else date.today(),
+        )
+        pet.add_task(task)
+        owner.add_pet(pet)
+    monkeypatch.setattr(demo, "build_demo_owner", lambda available_minutes: owner)
+
+    demo.main()
+    output = capsys.readouterr().out
+
+    assert "No tasks scheduled." in output
+    assert "0 tasks | Used: 0 min | Remaining: 30 min" in output
+    assert "Skipped: none" in output
+    assert "Ineligible care" not in output
+    assert "Why these tasks:" not in output
+    assert "Skipped (insufficient time):" not in output
+
+
+def test_cli_zero_budget_reports_all_due_tasks_as_skipped(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    owner = demo.build_demo_owner(available_minutes=0)
+    monkeypatch.setattr(demo, "build_demo_owner", lambda available_minutes: owner)
+
+    demo.main()
+    output = capsys.readouterr().out
+
+    assert "No tasks scheduled." in output
+    assert "0 tasks | Used: 0 min | Remaining: 0 min" in output
+    assert "Why these tasks:" not in output
+    skipped = output.split("Skipped (insufficient time):")[1]
+    assert len(skipped.strip().splitlines()[2:]) == 6
+    assert all(not task.completed for task in owner.get_all_tasks())
+
+
+def test_cli_single_task_uses_singular_label(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    owner = Owner("Jordan", 5)
+    pet = Pet("Luna", "cat")
+    pet.add_task(Task("Feed", 5, "high", "food"))
+    owner.add_pet(pet)
+    monkeypatch.setattr(demo, "build_demo_owner", lambda available_minutes: owner)
+
+    demo.main()
+    output = capsys.readouterr().out
+
+    assert "1 task | Used: 5 min | Remaining: 0 min" in output
+    assert "08:00-08:05" in output
+    assert "Luna / Feed: high priority; 5 min fits in 5 min; 0 min left." in output
+    assert "Skipped: none" in output

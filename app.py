@@ -300,7 +300,8 @@ def schedule_rows(plan: list[Task], start_time: time) -> list[dict]:
 
 
 def skipped_task_rows(owner: Owner, plan: list[Task]) -> list[dict]:
-    """Build priority-ordered rows for incomplete tasks omitted from the plan."""
+    """Build priority-ordered rows for due incomplete tasks omitted from the plan."""
+    today = date.today()
     selected_ids = {task.id for task in plan}
     return [
         {
@@ -310,7 +311,7 @@ def skipped_task_rows(owner: Owner, plan: list[Task]) -> list[dict]:
             "Priority": task.priority,
         }
         for task in Scheduler().sort_tasks(owner.get_all_tasks())
-        if not task.completed and task.id not in selected_ids
+        if not task.completed and task.due_date <= today and task.id not in selected_ids
     ]
 
 

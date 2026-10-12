@@ -1,13 +1,13 @@
 """Exercise the owner-first UI and its domain action boundaries."""
 
-from datetime import time
+from datetime import date, time, timedelta
 from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from app import create_owner, create_pet, create_task
-from pawpal_system import Owner, Pet
+from pawpal_system import Owner, Pet, Scheduler
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
@@ -318,6 +318,90 @@ def test_completed_tasks_are_neither_planned_nor_skipped(profile: AppTest) -> No
     assert [metric.value for metric in profile.metric] == ["1", "5", "85"]
     assert profile.caption[-1].value == "Skipped: none"
     assert active_owner(profile).get_all_tasks()[0].completed is True
+
+
+def test_all_completed_tasks_show_completion_guidance(profile: AppTest) -> None:
+    add_task(profile)
+    task = active_owner(profile).get_all_tasks()[0]
+    task.completed = True
+
+    submit(profile, "Generate schedule")
+
+    assert [metric.value for metric in profile.metric] == ["0", "0", "90"]
+    assert "All tasks are already completed." in [message.value for message in profile.info]
+    assert not profile.table
+    assert profile.caption[-1].value == "Skipped: none"
+
+
+def test_future_tasks_are_not_reported_as_insufficient_time(profile: AppTest) -> None:
+    add_task(profile, "Today", 10)
+    add_task(profile, "Tomorrow", 5)
+    owner = active_owner(profile)
+    owner.get_all_tasks()[1].due_date = date.today() + timedelta(days=1)
+
+    submit(profile, "Generate schedule")
+
+    assert [row["Task"] for row in rows(profile, "Time")] == ["Today"]
+    assert [metric.value for metric in profile.metric] == ["1", "10", "80"]
+    assert profile.caption[-1].value == "Skipped: none"
+    assert not any("Skipped (insufficient time)" in heading.value for heading in profile.markdown)
+
+
+def test_daily_completion_keeps_history_without_skipping_tomorrows_successor(
+    profile: AppTest,
+) -> None:
+    add_task(profile, "Feed", 10)
+    owner = active_owner(profile)
+    original = owner.get_all_tasks()[0]
+    successor = Scheduler().mark_task_complete(owner, original.id)
+
+    submit(profile, "Generate schedule")
+
+    assert successor is not None and successor.pet is original.pet
+    assert owner.get_all_tasks() == [original, successor]
+    assert [metric.value for metric in profile.metric] == ["0", "0", "90"]
+    assert not profile.table
+    assert profile.caption[-1].value == "Skipped: none"
+    assert [row["Completed"] for row in rows(profile, "Category")] == [True, False]
+
+
+def test_regenerating_after_a_budget_change_replaces_the_saved_plan(profile: AppTest) -> None:
+    add_task(profile, "Walk", 20)
+    add_task(profile, "Feed", 5, "low")
+    owner = active_owner(profile)
+    submit(profile, "Generate schedule")
+    first_plan = profile.session_state.profile_states[owner.id].plan
+    profile.number_input(key=key(profile, "available_minutes")).set_value(5)
+    profile.time_input(key=key(profile, "start_time")).set_value(time(12, 30))
+
+    submit(profile, "Generate schedule")
+
+    state = profile.session_state.profile_states[owner.id]
+    assert first_plan == owner.get_all_tasks()
+    assert state.plan is not first_plan
+    assert state.plan == [owner.get_all_tasks()[1]]
+    assert rows(profile, "Time")[0]["Time"] == "12:30–12:35"
+    assert [metric.value for metric in profile.metric] == ["1", "5", "0"]
+    assert profile.table[-1].value.to_dict("records") == [
+        {"Pet": "Mochi", "Task": "Walk", "Minutes": 20, "Priority": "high"},
+    ]
+
+
+def test_adding_a_task_does_not_commit_unsubmitted_schedule_inputs(profile: AppTest) -> None:
+    add_task(profile, "Feed", 10)
+    owner = active_owner(profile)
+    profile.number_input(key=key(profile, "available_minutes")).set_value(20)
+    profile.time_input(key=key(profile, "start_time")).set_value(time(9))
+    submit(profile, "Generate schedule")
+    profile.number_input(key=key(profile, "available_minutes")).set_value(0)
+    profile.time_input(key=key(profile, "start_time")).set_value(time(12))
+
+    add_task(profile, "Brush", 5, "low")
+
+    assert owner.available_minutes == 20
+    assert profile.session_state.profile_states[owner.id].plan_start_time == time(9)
+    assert [row["Time"] for row in rows(profile, "Time")] == ["09:00–09:10", "09:10–09:15"]
+    assert [metric.value for metric in profile.metric] == ["2", "15", "5"]
 
 
 def test_slot_crossing_midnight_labels_the_next_day(profile: AppTest) -> None:

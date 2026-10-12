@@ -163,10 +163,19 @@ python -m pytest -q
 
 The tests cover model validation, pet/task associations, duplicate attachments, independent collections, daily and one-time completion behavior, stable priority ordering, budget limits, completed-task exclusion, and continuing after an oversized task. Algorithm tests cover combined filters, duplicate pet names, retained completion history, fresh successor IDs, repeated completion, owner isolation, calendar rollover, overdue/future planning, and fixed-time conflicts across pets and midnight. CLI tests check both budgets, printed times and pet identities, the algorithms flag, help output, and silent imports. Streamlit tests cover the empty owner-first view, conditional sections, selecting new owners and pets, switching profiles without mixing data or budgets, duplicate names, task assignment, plans across multiple pets, validation, empty results, midnight slots, and repeated generation without changing task completion. Session tests check domain identity and saved schedules across reruns, restoring forms and plans after profile switching, owner-selection fallback, automatic refresh after additions and deletions, visible empty plans, and preserving schedules during unsubmitted edits or invalid task submissions. A new visit still starts empty. Deletion tests cover selecting table rows, duplicate titles, multiple rows across pets, pet-task cascade deletion, dropdown repair, deleting the last pet/task, owner isolation, and clearing selection after adding rows. AppTest does not support direct table-cell interaction, so tests provide the table-edit state a browser sends and exercise the real trash buttons.
 
+Additional scheduling tests check budget boundaries across pets, replanning with changed budgets, insertion order for overdue priority ties, Unicode pet-name matching, recurrence over multiple days, completion isolation, and conflicts across calendar boundaries and multi-day intervals. UI helper tests check trimmed inputs, independent profile defaults, duplicate pet labels, retained task history, and exact-midnight/multi-day clock labels. Regression tests ensure future tasks, including daily successors, stay out of the UI's insufficient-time table. UI and CLI tests also check all-completed plans, zero budgets, single-task output, replacing a generated plan, and refreshing a plan while schedule-form edits remain unsubmitted.
+
+To run only scheduling tests or UI tests:
+
+```bash
+python -m pytest -q tests/test_scheduler.py
+python -m pytest -q tests/test_app.py tests/test_app_helpers.py
+```
+
 Verified test result:
 
 ```text
-159 passed
+209 passed
 ```
 
 ## 📐 Smarter Scheduling
